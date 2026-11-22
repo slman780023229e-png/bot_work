@@ -9,15 +9,15 @@ import {
 
 import fetch from 'node-fetch'
 
-// ⚠️ غير هذول بس - حط رقمك ورابط قناتك هنا
-const ownerNumber = '967700000000' // <-- حط رقم المطور هنا بدون +
+const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX' // <-- حط رابط قناتك هنا
 
 const handler = async (m, { conn }) => {
 
     try {
 
-        try { await conn.sendMessage(m.chat, { react: { text: '🪄', key: m.key } }) } catch {}
+        // ⚡ تفاعل برق
+        try { await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } }) } catch {}
 
         const user = await conn.getName(m.sender)
 
@@ -49,24 +49,19 @@ const handler = async (m, { conn }) => {
 `*◇❐ ═━╾⚡ ╼━═ ❐◇*
 
 *◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  🎀 أهلاً بك يا ${user}
+  ⚡ أهلاً بك يا ${user}
 
 *◇❐ ═━╾⚡ ╼━═ ❐◇*
 
 *◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  ✦ نحنُ الأفضل حينَ نصنعُ المستحيل
-  ✦ نرتّبُ الفوضى ونحوّلها إلى جمال
-  ✦ كل ما تحتاجه بين يديك
-  ❝ إن كان الإبداعُ طريقاً...
-       فـ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 هو الطريق ❞
-  تم التطوير من قبل 👑𝐊𝐀𝐍𝐄𝐊𝐈
-  🌺 اختر ما تريد من الأسفل
+  ✦ الفخامة لها عنوان واحد
+  ✦ القوة .. السرعة .. الهيبة
+  ✦ اختر .. واستمتع
 
 *◇❐ ═━╾⚡ ╼━═ ❐◇*
 
 *◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  🎀 استمتع بالخدمات
-  ✨ واستكشف عالم 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
+  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
 
         const interactiveMessage = {
 
