@@ -1,0 +1,203 @@
+
+name: ARTHUR BOT Runner
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 */4 * * *'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: arthur-whatsapp-bot
+  cancel-in-progress: false
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 230
+
+    steps:
+      - name: Checkout ARTHUR BOT
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run ARTHUR BOT
+        shell: bash
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set +e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # حماية ملفات الجلسات والبيانات والملفات السرية
+          touch .gitignore
+
+          add_ignore() {
+            grep -qxF "$1" .gitignore || echo "$1" >> .gitignore
+          }
+
+          add_ignore "node_modules/"
+          add_ignore "**/node_modules/"
+          add_ignore ".env"
+          add_ignore ".env.*"
+          add_ignore "!/.env.example"
+          add_ignore "ArthurSession/"
+          add_ignore "ArthurSubBot/"
+          add_ignore "BackupSession/"
+          add_ignore "session/"
+          add_ignore "sessions/"
+          add_ignore "ملف_الاتصال/"
+          add_ignore "database/"
+          add_ignore "auth_info_baileys/"
+          add_ignore "**/creds.json"
+          add_ignore "*.db"
+          add_ignore "*.db.*"
+          add_ignore "*.pem"
+          add_ignore "*.key"
+          add_ignore "*.p12"
+          add_ignore "*.pfx"
+          add_ignore "*.log"
+          add_ignore "temp/"
+          add_ignore "tmp/"
+
+          save_changes() {
+            echo "Checking ARTHUR repository changes..."
+
+            # إزالة الملفات الحساسة من تتبع Git دون حذفها من بيئة التشغيل
+            git rm -r --cached --ignore-unmatch -- \
+              node_modules \
+              ArthurSession \
+              ArthurSubBot \
+              BackupSession \
+              session \
+              sessions \
+              "ملف_الاتصال" \
+              database \
+              auth_info_baileys || true
+
+            # عدم رفع أي جلسات أو أسرار أو قواعد بيانات
+            git add -A -- . \
+              ':(exclude).gitignore' \
+              ':(exclude)**/node_modules/**' \
+              ':(exclude)**/ArthurSession/**' \
+              ':(exclude)**/ArthurSubBot/**' \
+              ':(exclude)**/BackupSession/**' \
+              ':(exclude)**/session/**' \
+              ':(exclude)**/sessions/**' \
+              ':(exclude)**/ملف_الاتصال/**' \
+              ':(exclude)**/database/**' \
+              ':(exclude)**/auth_info_baileys/**' \
+              ':(exclude)**/creds.json' \
+              ':(exclude).env' \
+              ':(exclude).env.*' \
+              ':(exclude)**/.env' \
+              ':(exclude)**/.env.*' \
+              ':(exclude)**/*.db' \
+              ':(exclude)**/*.db.*' \
+              ':(exclude)**/*.pem' \
+              ':(exclude)**/*.key' \
+              ':(exclude)**/*.p12' \
+              ':(exclude)**/*.pfx' \
+              ':(exclude)**/*.log' \
+              ':(exclude)**/temp/**' \
+              ':(exclude)**/tmp/**' || return 1
+
+            git add .gitignore || return 1
+
+            if git diff --cached --quiet; then
+              echo "No changes to save."
+              return 0
+            fi
+
+            git commit -m "Auto-save ARTHUR BOT progress" || return 1
+
+            git fetch origin \
+              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
+
+            if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
+              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+                echo "Push failed. Trying to synchronize..."
+
+                git fetch origin \
+                  "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
+
+                git -c rebase.autoStash=true rebase \
+                  "origin/${GITHUB_REF_NAME}" || {
+                    git rebase --abort || true
+                    echo "Rebase conflict. Save failed."
+                    return 1
+                  }
+
+                git push origin "HEAD:${GITHUB_REF_NAME}" || return 1
+              fi
+
+              echo "ARTHUR changes saved successfully."
+            fi
+          }
+
+          cleanup_and_exit() {
+            echo "Stopping ARTHUR BOT..."
+            if [ -n "${BOT_PID:-}" ]; then
+              kill -TERM "$BOT_PID" 2>/dev/null || true
+              wait "$BOT_PID" 2>/dev/null || true
+            fi
+            save_changes || echo "Final save failed."
+            exit "${1:-0}"
+          }
+
+          trap 'cleanup_and_exit 0' SIGTERM SIGINT
+
+          echo "=================================="
+          echo "       ARTHUR BOT RUNNER"
+          echo "=================================="
+
+          while true; do
+            node start.js &
+            BOT_PID=$!
+
+            echo "ARTHUR BOT started. PID: $BOT_PID"
+            LAST_SAVE=$(date +%s)
+
+            while kill -0 "$BOT_PID" 2>/dev/null; do
+              sleep 5
+
+              NOW=$(date +%s)
+
+              if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
+                if kill -0 "$BOT_PID" 2>/dev/null; then
+                  save_changes || echo "Auto-save failed; retrying later."
+                fi
+                LAST_SAVE=$(date +%s)
+              fi
+            done
+
+            wait "$BOT_PID"
+            BOT_STATUS=$?
+            BOT_PID=""
+
+            echo "Runner exited with status: $BOT_STATUS"
+
+            save_changes || echo "Save after exit failed."
+
+            echo "Restarting ARTHUR BOT in 5 seconds..."
+            sleep 5
+          done
