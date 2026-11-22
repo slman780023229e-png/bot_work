@@ -30,8 +30,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: npm
+          node-version: '24'
 
       - name: Install Dependencies
         run: npm install
@@ -48,7 +47,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # حماية ملفات الجلسات والبيانات والملفات السرية
           touch .gitignore
 
           add_ignore() {
@@ -82,7 +80,6 @@ jobs:
           save_changes() {
             echo "Checking ARTHUR repository changes..."
 
-            # إزالة الملفات الحساسة من تتبع Git دون حذفها من بيئة التشغيل
             git rm -r --cached --ignore-unmatch -- \
               node_modules \
               ArthurSession \
@@ -94,7 +91,6 @@ jobs:
               database \
               auth_info_baileys || true
 
-            # عدم رفع أي جلسات أو أسرار أو قواعد بيانات
             git add -A -- . \
               ':(exclude).gitignore' \
               ':(exclude)**/node_modules/**' \
@@ -134,8 +130,9 @@ jobs:
               "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
 
             if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
+
               if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
-                echo "Push failed. Trying to synchronize..."
+                echo "Push failed. Synchronizing..."
 
                 git fetch origin \
                   "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
@@ -156,10 +153,12 @@ jobs:
 
           cleanup_and_exit() {
             echo "Stopping ARTHUR BOT..."
+
             if [ -n "${BOT_PID:-}" ]; then
               kill -TERM "$BOT_PID" 2>/dev/null || true
               wait "$BOT_PID" 2>/dev/null || true
             fi
+
             save_changes || echo "Final save failed."
             exit "${1:-0}"
           }
@@ -184,8 +183,9 @@ jobs:
 
               if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
                 if kill -0 "$BOT_PID" 2>/dev/null; then
-                  save_changes || echo "Auto-save failed; retrying later."
+                  save_changes || echo "Auto-save failed; will retry later."
                 fi
+
                 LAST_SAVE=$(date +%s)
               fi
             done
@@ -194,7 +194,7 @@ jobs:
             BOT_STATUS=$?
             BOT_PID=""
 
-            echo "Runner exited with status: $BOT_STATUS"
+            echo "Bot exited with status $BOT_STATUS"
 
             save_changes || echo "Save after exit failed."
 
