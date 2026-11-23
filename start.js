@@ -3,11 +3,14 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { MongoClient } from 'mongodb';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ENTRY_FILE = path.join(__dirname, 'index.js');
+const SESSION_DIR = path.join(__dirname, 'ملف_الاتصال');
 const RESTART_DELAY = 3000;
+const SYNC_INTERVAL = 15000; // مزامنة الجلسة مع MongoDB كل 15 ثانية
 
 const gold = chalk.hex('#D4AF37');
 const red = chalk.hex('#C62828');
@@ -17,8 +20,99 @@ const green = chalk.hex('#42D392');
 
 let child = null;
 let restartTimer = null;
+let syncTimer = null;
 let shuttingDown = false;
 let launching = false;
+let mongoClient = null;
+let lastSyncHash = '';
+
+async function getSessionCollection() {
+  const uri = process.env.MONGO_URI;
+  if (!uri) return null;
+
+  if (!mongoClient) {
+    mongoClient = new MongoClient(uri, {
+      maxPoolSize: 5,
+      serverSelectionTimeoutMS: 15000,
+    });
+    await mongoClient.connect();
+  }
+  return mongoClient.db().collection('arthur_session_files');
+}
+
+async function restoreSessionFromMongo() {
+  try {
+    const col = await getSessionCollection();
+    if (!col) {
+      console.log(chalk.yellow('⚠️ MONGO_URI غير مضبوط؛ سيتم الاعتماد على الجلسة المحلية فقط.'));
+      return;
+    }
+
+    const docs = await col.find({ sessionId: 'default' }).toArray();
+    if (!docs.length) {
+      console.log(gray('ℹ️ لا توجد جلسة محفوظة في MongoDB بعد (سيتم حفظها تلقائياً بعد أول ربط).'));
+      return;
+    }
+
+    fs.mkdirSync(SESSION_DIR, { recursive: true });
+    for (const doc of docs) {
+      if (!doc.fileName || !doc.content) continue;
+      const targetPath = path.join(SESSION_DIR, doc.fileName);
+      fs.writeFileSync(targetPath, Buffer.from(doc.content, 'base64'));
+    }
+    console.log(green(`🗄️ [MongoDB] تم استعادة ${docs.length} ملف من ملفات الجلسة بنجاح.`));
+  } catch (error) {
+    console.error(red(`❌ فشل استعادة الجلسة من MongoDB: ${error.message}`));
+  }
+}
+
+async function syncSessionToMongo(force = false) {
+  try {
+    const col = await getSessionCollection();
+    if (!col || !fs.existsSync(SESSION_DIR)) return;
+
+    const files = fs.readdirSync(SESSION_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort();
+
+    if (!files.length) return;
+
+    const snapshot = files.map((fileName) => {
+      const fullPath = path.join(SESSION_DIR, fileName);
+      const stat = fs.statSync(fullPath);
+      return `${fileName}:${stat.size}:${Math.floor(stat.mtimeMs)}`;
+    }).join('|');
+
+    if (!force && snapshot === lastSyncHash) return;
+
+    const ops = files.map((fileName) => {
+      const content = fs.readFileSync(path.join(SESSION_DIR, fileName)).toString('base64');
+      return {
+        updateOne: {
+          filter: { _id: `default:${fileName}` },
+          update: {
+            $set: {
+              sessionId: 'default',
+              fileName,
+              content,
+              updatedAt: new Date(),
+            },
+          },
+          upsert: true,
+        },
+      };
+    });
+
+    if (ops.length) {
+      await col.bulkWrite(ops, { ordered: false });
+      await col.deleteMany({ sessionId: 'default', fileName: { $nin: files } });
+      lastSyncHash = snapshot;
+    }
+  } catch (error) {
+    console.error(chalk.yellow(`⚠️ تعذرت مزامنة الجلسة مع MongoDB: ${error.message}`));
+  }
+}
 
 function protectSessions() {
   const sessionDirs = ['ArthurSession', 'ArthurSubBot', 'BackupSession', 'session', 'sessions', 'ملف_الاتصال'];
@@ -31,7 +125,6 @@ function protectSessions() {
 }
 
 function clearTemporaryFiles() {
-  // حذف الملفات المؤقتة فقط، مع الحفاظ على المجلدات والملفات الدائمة والجلسات.
   const tempDirs = ['tmp', 'temp'];
   for (const name of tempDirs) {
     const dir = path.join(__dirname, name);
@@ -88,6 +181,7 @@ async function launchBot() {
   }
 
   console.clear();
+  await restoreSessionFromMongo();
   protectSessions();
   clearTemporaryFiles();
   showBanner();
@@ -103,8 +197,13 @@ async function launchBot() {
   console.log('');
   console.log(green('✓ ARTHUR BOT IS STARTING'));
   console.log(gray('ENTRY: index.js'));
-  console.log(gray('DATABASE: handled by the existing project code'));
+  console.log(gray('DATABASE: MongoDB Session Sync Active'));
   console.log('');
+
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = setInterval(() => {
+    syncSessionToMongo(false).catch(() => {});
+  }, SYNC_INTERVAL);
 
   try {
     child = spawn(process.execPath, [ENTRY_FILE, ...process.argv.slice(2)], {
@@ -117,8 +216,14 @@ async function launchBot() {
       console.error(red(`❌ تعذر تشغيل index.js: ${error.message}`));
     });
 
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
       child = null;
+      if (syncTimer) {
+        clearInterval(syncTimer);
+        syncTimer = null;
+      }
+      await syncSessionToMongo(true);
+
       if (shuttingDown) return;
       console.log('');
       console.log(red(`⚠️ توقف ARTHUR BOT (code: ${code ?? 'null'}, signal: ${signal ?? 'none'})`));
@@ -139,13 +244,16 @@ async function launchBot() {
   }
 }
 
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${gold(`إيقاف المشغل بأمان (${signal})...`)}`);
   if (restartTimer) clearTimeout(restartTimer);
+  if (syncTimer) clearInterval(syncTimer);
+  await syncSessionToMongo(true);
+  if (mongoClient) await mongoClient.close().catch(() => {});
   if (child && !child.killed) child.kill('SIGTERM');
-  else process.exit(0);
+  process.exit(0);
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
