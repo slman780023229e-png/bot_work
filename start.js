@@ -56,7 +56,9 @@ async function restoreSessionFromMongo() {
 
     fs.mkdirSync(SESSION_DIR, { recursive: true });
     for (const doc of docs) {
-      if (!doc.fileName || !doc.content) continue;
+      if (!doc.fileName || typeof doc.content !== 'string') continue;
+      // Only restore plain file names; never allow a stored path to escape SESSION_DIR.
+      if (path.basename(doc.fileName) !== doc.fileName) continue;
       const targetPath = path.join(SESSION_DIR, doc.fileName);
       fs.writeFileSync(targetPath, Buffer.from(doc.content, 'base64'));
     }
@@ -106,7 +108,8 @@ async function syncSessionToMongo(force = false) {
 
     if (ops.length) {
       await col.bulkWrite(ops, { ordered: false });
-      await col.deleteMany({ sessionId: 'default', fileName: { $nin: files } });
+      // Deliberately do not delete remote session files during synchronization.
+      // A partial/local folder must never erase a recoverable MongoDB backup.
       lastSyncHash = snapshot;
     }
   } catch (error) {
