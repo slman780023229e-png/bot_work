@@ -250,9 +250,14 @@ async function shutdown(signal) {
   console.log(`\n${gold(`إيقاف المشغل بأمان (${signal})...`)}`);
   if (restartTimer) clearTimeout(restartTimer);
   if (syncTimer) clearInterval(syncTimer);
+
+  if (child && !child.killed) {
+    child.kill('SIGTERM');
+    await sleep(1000);
+  }
+
   await syncSessionToMongo(true);
   if (mongoClient) await mongoClient.close().catch(() => {});
-  if (child && !child.killed) child.kill('SIGTERM');
   process.exit(0);
 }
 
