@@ -111,8 +111,11 @@ export async function useMongoDBAuthState(mongoUri, sessionId = 'arthur-session'
     createMasterSnapshot: async () => {
       await writeData('master_creds', creds);
     },
+    // Kept for backwards compatibility with older callers.
+    // A pairing/re-authentication request must NEVER erase saved credentials.
     requestRePair: async () => {
-      await collection.deleteMany({ sessionId });
+      console.warn('[MongoDB Auth] Session data was preserved; no automatic deletion performed.');
+      return false;
     },
     flush: async () => {
       await saveCreds();
