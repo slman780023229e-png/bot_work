@@ -1,5 +1,5 @@
 // plugins/اوامر.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - نسخة مضمونة 100% - هجين ق + tags ✧
+// ARTHUR BOT - هجين ق + tags - مضمون - زخرفة خفيفة
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -14,12 +14,8 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
-// رابط احتياط، اذا سويت .دايم بيصير هو اللي يشتغل
 const MENU_IMAGE = 'https://files.catbox.moe/xxxxxx.jpg'
 
-// ═══════════════════════════════════
-// اسماء أقسام ق1 - ق10
-// ═══════════════════════════════════
 const Q_NAMES = {
     'ق1': { title: 'الجروبات والمشرفين', desc: 'إدارة وحماية الجروبات', icon: '👑' },
     'ق2': { title: 'التحميلات', desc: 'تحميل الفيديوهات والصور والملفات', icon: '📥' },
@@ -80,9 +76,6 @@ const getDesc = (name) => {
     return 'أقسام وأوامر البوت'
 }
 
-// ═══════════════════════════════════
-// الطريقة 1: قراءة من ق1 و ق2 ...
-// ═══════════════════════════════════
 function getQSections() {
     let files = []
     try { files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js')) } catch { return [] }
@@ -106,9 +99,6 @@ function getQSections() {
     return sections
 }
 
-// ═══════════════════════════════════
-// الطريقة 2: قراءة من tags الملفات
-// ═══════════════════════════════════
 async function getTagSections() {
     let files = []
     try { files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js')) } catch { return {} }
@@ -117,7 +107,6 @@ async function getTagSections() {
         if (file === 'اوامر.js') continue
         let content = ''
         try { content = fs.readFileSync(path.join(__dirname, file), 'utf-8') } catch { continue }
-        // ملف ق1 نفسه نتخطاه
         if (file.match(/^ق\d+\.js$/) || content.match(/handler\.command\s*=\s*\/\^?\(?ق\d+/)) continue
         try {
             const mod = await import(`./${file}?t=${Date.now()}`)
@@ -144,9 +133,6 @@ async function getTagSections() {
     return grouped
 }
 
-// ═══════════════════════════════════
-// دمج الطريقتين
-// ═══════════════════════════════════
 async function getAllSections() {
     let qSections = getQSections()
     let tagGrouped = await getTagSections()
@@ -169,21 +155,36 @@ async function getAllSections() {
     return { all, qSections, tagGrouped, tagSections }
 }
 
-// ═══════════════════════════════════
-// عرض قسم tags - يشتغل بالضغطة وبالكتابة
-// ═══════════════════════════════════
 async function showTagSection(conn, m, catName, usedPrefix) {
+    let qSections = getQSections()
+    let qMatch = qSections.find(s =>
+        normalize(s.title) === normalize(catName) ||
+        normalize(catName).includes(normalize(s.title)) ||
+        normalize(s.title).includes(normalize(catName))
+    )
+    if (qMatch) {
+        m.text = `.${qMatch.key}`
+        m.body = `.${qMatch.key}`
+        if (m.msg) m.msg.text = `.${qMatch.key}`
+        return { isQ: true, key: qMatch.key }
+    }
+
     let { tagGrouped } = await getAllSections()
     let found = Object.keys(tagGrouped).find(c => normalize(c) === normalize(catName))
     if (!found) found = Object.keys(tagGrouped).find(c => normalize(c).includes(normalize(catName)) || normalize(catName).includes(normalize(c)))
     if (!found) {
-        return conn.sendMessage(m.chat, { text: `❌ ما لقيت قسم *${catName}*\n\nاكتب .اوامر وشوف الأقسام المتوفرة` }, { quoted: m })
+        return conn.sendMessage(m.chat, { text: `❌ ما لقيت قسم ${catName}\nاكتب .اوامر وشوف الأقسام المتوفرة` }, { quoted: m })
     }
     let cmds = tagGrouped[found]
-    let text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n*◇❐ ═━╾ ⚡ ╼━═ ❐◇*\n  ${getIcon(found)} قسم: ${found}\n  📦 عدد الأوامر: ${cmds.length}\n\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n`
+    // ✅ نفس الزخرفة القديمة بس عمودين بس - فوق وتحت
+    let text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n`
+    text += `  ${getIcon(found)} قسم: ${found}\n`
+    text += `  📦 عدد الأوامر: ${cmds.length}\n\n`
     for (let c of cmds) text += `  • ${usedPrefix || '.'}${c}\n`
-    text += `\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n*◇❐ ═━╾ ⚡ ╼━═ ❐◇*\n  اكتب ${usedPrefix || '.'}اوامر للرجوع\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
+    text += `\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n`
+    text += `  اكتب ${usedPrefix || '.'}اوامر للرجوع\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
     await conn.sendMessage(m.chat, { text }, { quoted: m })
+    return { isQ: false }
 }
 
 async function getImageMedia(conn) {
@@ -202,19 +203,14 @@ async function getImageMedia(conn) {
     } catch { return null }
 }
 
-// ═══════════════════════════════════
-// القائمة الرئيسية
-// ═══════════════════════════════════
 async function showMenu(conn, m) {
     try { await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } }) } catch {}
     let user = m.pushName || 'مستخدم'
     try { if (typeof conn.getName === 'function') user = (await conn.getName(m.sender)) || user } catch {}
 
     let { all, qSections, tagSections } = await getAllSections()
-    console.log('[اوامر] ق:', qSections.map(s => s.key), '| tags:', tagSections.map(s => s.title))
-
     if (!all.length) {
-        return conn.sendMessage(m.chat, { text: `❌ ما لقيت أي أقسام!\n\nتأكد ان عندك:\n• ملفات ق1 و ق2 ...\n• أو ملفات فيها tags` }, { quoted: m })
+        return conn.sendMessage(m.chat, { text: `❌ ما لقيت أي أقسام!\nتأكد ان عندك ملفات ق1 و ق2 أو ملفات فيها tags` }, { quoted: m })
     }
 
     let rows = all.slice(0, 10).map(s => ({
@@ -226,7 +222,8 @@ async function showMenu(conn, m) {
 
     const media = await getImageMedia(conn)
     const totalCmds = Object.values(await getTagSections()).flat().length
-    const text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n*◇❐ ═━╾ ⚡ ╼━═ ❐◇*\n  ⚡ أهلاً بك يا ${user}\n\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n*◇❐ ═━╾ ⚡ ╼━═ ❐◇*\n  ✦ الفخامة لها عنوان واحد\n  ✦ القوة .. السرعة .. الهيبة\n  ✦ اختر .. واستمتع\n  ✦ ${qSections.length} قسم ثابت | ${tagSections.length} قسم تلقائي | ${totalCmds} أمر\n\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n*◇❐ ═━╾ ⚡ ╼━═ ❐◇*\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
+    // ✅ نفس الزخرفة القديمة بس عمودين بس - فوق وتحت، مو 4
+    const text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n  ⚡ أهلاً بك يا ${user}\n\n  ✦ الفخامة لها عنوان واحد\n  ✦ القوة .. السرعة .. الهيبة\n  ✦ اختر .. واستمتع\n  ✦ ${qSections.length} قسم ثابت | ${tagSections.length} قسم تلقائي | ${totalCmds} أمر\n\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
 
     const header = media?.imageMessage
         ? { title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓', hasMediaAttachment: true, imageMessage: media.imageMessage }
@@ -257,43 +254,31 @@ async function showMenu(conn, m) {
     await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
 }
 
-// ═══════════════════════════════════
-// الهاندلر الرئيسي - يقبل الكتابة والضغطة
-// ═══════════════════════════════════
 let handler = async (m, { conn, usedPrefix }) => {
     try {
         let full = (m.text || m.body || '').trim()
-        // اذا جت ضغطة .قسم من before، full بيكون .قسم xxx
         if (/^\.?قسم/i.test(full)) {
             let cat = full.replace(/^\.?قسم\s*/i, '').trim()
             if (!cat) return showMenu(conn, m)
-            return showTagSection(conn, m, cat, usedPrefix || '.')
+            let res = await showTagSection(conn, m, cat, usedPrefix || '.')
+            if (res?.isQ) return
+            return
         }
-        // اذا كتب .اوامر او .قسم بدون اسم
         return showMenu(conn, m)
     } catch (e) {
-        console.error('❌ MENU ERROR:', e)
+        console.error('MENU ERROR:', e)
         await m.reply('❌ حصل خطأ أثناء فتح القائمة.')
     }
 }
 
-// ═══════════════════════════════════
-// ✅ هذا هو اللي يخلي الضغطة تشتغل - مهم جداً
-// ═══════════════════════════════════
 handler.before = async (m, { conn }) => {
     try {
         let selectedId = ''
-
-        // 1 | list عادي
         if (m.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
             selectedId = m.message.listResponseMessage.singleSelectReply.selectedRowId
-        }
-        // 2 | nativeFlow عادي
-        else if (m.message?.interactiveResponseMessage?.body?.text) {
+        } else if (m.message?.interactiveResponseMessage?.body?.text) {
             selectedId = m.message.interactiveResponseMessage.body.text
-        }
-        // 3 | nativeFlow داخل paramsJson
-        else if (m.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+        } else if (m.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
             try {
                 let params = JSON.parse(m.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
                 selectedId = params.id || params.selectedRowId || ''
@@ -302,16 +287,11 @@ handler.before = async (m, { conn }) => {
                     selectedId = inner.id || ''
                 }
             } catch {}
-        }
-        // 4 | viewOnce
-        else if (m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.body?.text) {
+        } else if (m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.body?.text) {
             selectedId = m.message.viewOnceMessage.message.interactiveResponseMessage.body.text
-        }
-        else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.body?.text) {
+        } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.body?.text) {
             selectedId = m.message.viewOnceMessageV2.message.interactiveResponseMessage.body.text
-        }
-        // 5 | viewOnce داخل viewOnceMessageV2 مع nativeFlow
-        else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+        } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
             try {
                 let params = JSON.parse(m.message.viewOnceMessageV2.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
                 selectedId = params.id || ''
@@ -321,21 +301,16 @@ handler.before = async (m, { conn }) => {
         if (!selectedId) return
         selectedId = String(selectedId).trim()
         if (!selectedId) return
-        console.log('[اوامر] ضغطة وصلت:', selectedId)
 
-        // ── ضغطة .ق1 ... .ق10 ──
         if (/^\.?ق\s*\d+$/.test(selectedId)) {
             let cmd = selectedId.replace(/\s+/g, '')
             if (!cmd.startsWith('.')) cmd = '.' + cmd
             m.text = cmd
             m.body = cmd
-            m.msg = m.msg || {}
             if (m.msg) m.msg.text = cmd
-            // نرجع بدون ما نوقف، عشان القالب يروح لملف ق1 وينفذه
             return
         }
 
-        // ── ضغطة .قسم xxx ──
         if (/^\.?قسم\s+/i.test(selectedId)) {
             let cmd = selectedId.startsWith('.') ? selectedId : '.' + selectedId
             m.text = cmd
@@ -344,16 +319,27 @@ handler.before = async (m, { conn }) => {
             return
         }
 
-        // ── ضغطة اسم قسم بس بدون .قسم ──
         if (m.message?.interactiveResponseMessage || m.message?.listResponseMessage || m.message?.viewOnceMessage || m.message?.viewOnceMessageV2) {
-            if (!selectedId.startsWith('.') && selectedId.length < 30 && !selectedId.includes('http')) {
+            if (!selectedId.startsWith('.') && selectedId.length < 40 && !selectedId.includes('http')) {
+                let qSections = getQSections()
+                let qMatch = qSections.find(s =>
+                    normalize(s.title) === normalize(selectedId) ||
+                    normalize(s.title).includes(normalize(selectedId)) ||
+                    normalize(selectedId).includes(normalize(s.title))
+                )
+                if (qMatch) {
+                    let cmd = `.${qMatch.key}`
+                    m.text = cmd
+                    m.body = cmd
+                    if (m.msg) m.msg.text = cmd
+                    return
+                }
                 m.text = `.قسم ${selectedId}`
                 m.body = `.قسم ${selectedId}`
                 if (m.msg) m.msg.text = `.قسم ${selectedId}`
                 return
             }
         }
-
     } catch (e) {
         console.log('[اوامر] before error:', e.message)
     }
