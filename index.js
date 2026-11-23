@@ -8,8 +8,6 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import { platform } from 'process'
 import * as ws from 'ws'
 import fs, {
-  watchFile,
-  unwatchFile,
   writeFileSync,
   readdirSync,
   statSync,
@@ -191,18 +189,22 @@ function unsanitizeId(id) {
   return id.replace(/_/g, '.')
 }
 function sanitizeObject(obj) {
+  if (Array.isArray(obj)) return obj.map((value) => sanitizeObject(value))
+  if (!obj || typeof obj !== 'object' || Buffer.isBuffer(obj) || obj instanceof Date) return obj
   const sanitized = {}
   for (const [key, value] of Object.entries(obj)) {
     const sanitizedKey = key.replace(/\./g, '_')
-    sanitized[sanitizedKey] = typeof value === 'object' && value !== null ? sanitizeObject(value) : value
+    sanitized[sanitizedKey] = sanitizeObject(value)
   }
   return sanitized
 }
 function unsanitizeObject(obj) {
+  if (Array.isArray(obj)) return obj.map((value) => unsanitizeObject(value))
+  if (!obj || typeof obj !== 'object' || Buffer.isBuffer(obj) || obj instanceof Date) return obj
   const unsanitized = {}
   for (const [key, value] of Object.entries(obj)) {
     const unsanitizedKey = key.replace(/_/g, '.')
-    unsanitized[unsanitizedKey] = typeof value === 'object' && value !== null ? unsanitizeObject(value) : value
+    unsanitized[unsanitizedKey] = unsanitizeObject(value)
   }
   return unsanitized
 }
@@ -250,19 +252,16 @@ global.db.loadDatabase = async function () {
     const seenIds = new Set()
     for (const doc of docs) {
       const originalId = unsanitizeId(doc._id)
+      // Never delete a database record during startup. If legacy IDs collide
+      // after decoding, keep the first in-memory value and leave both on disk.
       if (seenIds.has(originalId)) {
-        await new Promise((resolve, reject) => {
-          collections[category].remove({ _id: doc._id }, {}, (err) => {
-            if (err) return reject(err)
-            resolve()
-          })
-        })
-      } else {
-        seenIds.add(originalId)
-        if (category === 'users' && (originalId.includes('@newsletter') || originalId.includes('lid'))) continue
-        if (category === 'chats' && originalId.includes('@newsletter')) continue
-        global.db.data[category][originalId] = unsanitizeObject(doc.data)
+        console.warn(`[Database] Legacy ID collision in ${category}; preserved document ${doc._id}.`)
+        continue
       }
+      seenIds.add(originalId)
+      if (category === 'users' && (originalId.includes('@newsletter') || originalId.includes('lid'))) continue
+      if (category === 'chats' && originalId.includes('@newsletter')) continue
+      global.db.data[category][originalId] = unsanitizeObject(doc.data)
     }
   })
   await Promise.all(loadPromises)
@@ -760,23 +759,23 @@ async function connectionUpdate(update) {
 
     console.log(chalk.red(`❌ Connection closed: code=${closeReason}, error=${errorName}, message=${errorMessage || 'n/a'}`))
 
-    if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || reason === DisconnectReason.loggedOut) {
+    if (
+      statusCode === DisconnectReason.loggedOut ||
+      statusCode === 401 ||
+      reason === DisconnectReason.loggedOut ||
+      reason === DisconnectReason.badSession ||
+      reason === DisconnectReason.connectionReplaced
+    ) {
       connectionOpen = false
       authRejected = true
-      console.log(chalk.red.bold('🚫 WhatsApp logged out this linked session (401 / loggedOut).'))
+      console.log(chalk.red.bold('🚫 WhatsApp rejected or replaced this session (401 / loggedOut / badSession / connectionReplaced).'))
+      console.log(chalk.yellow('🛡️ Saved authentication data was NOT deleted. Automatic reconnect is paused to avoid repeated pairing attempts.'))
+      // A logged-out/401 session cannot be repaired by reconnecting in a loop.
+      // Preserve the credentials for inspection/backup and wait for an explicit restart.
       try {
-        if (useMongoSession && typeof currentAuthStore?.requestRePair === 'function') {
-          await currentAuthStore.requestRePair()
-        }
-      } catch (repairError) {
-        console.error(chalk.red('❌ Session repair error:'), repairError?.message || repairError)
-      }
-      if (!isShuttingDown && !reconnectTimer) {
-        reconnectTimer = setTimeout(async () => {
-          reconnectTimer = null
-          if (isShuttingDown) return
-          await startBot().catch(console.error)
-        }, RECONNECT_DELAY)
+        if (currentAuthStore?.flush) await currentAuthStore.flush()
+      } catch (saveError) {
+        console.error(chalk.red('❌ Could not flush preserved auth state:'), saveError?.message || saveError)
       }
       return
     }
@@ -1095,12 +1094,8 @@ setInterval(async () => {
   console.log(chalk.bold.cyanBright('[🧹] Temporary files cleaned'))
 }, 1000 * 60 * 3)
 
-setInterval(async () => {
-  if (global.stopped === 'close' || !global.conn || !global.conn.user) return
-  await purgeSessionSB()
-  await purgeSession()
-  console.log(chalk.bold.cyanBright('[🧹] Session files cleaned'))
-}, 1000 * 60 * 10)
+// Authentication/pre-key files are intentionally not auto-pruned.
+// Removing old keys without Baileys lifecycle knowledge can invalidate a session.
 
 process.on('unhandledRejection', (error) => {
   console.error(chalk.red('❌ Unhandled rejection:'), error?.stack || error?.message || error)
@@ -1156,9 +1151,6 @@ _quickTest()
   })
   .catch(console.error)
 
-let file = fileURLToPath(import.meta.url)
-watchFile(file, () => {
-  unwatchFile(file)
-  console.log(chalk.bold.greenBright('[🔄] Main bot file updated, reloading...'))
-  import(`${file}?update=${Date.now()}`)
-})
+// Do not re-import the entire entry point on file changes: that would create
+// duplicate sockets, timers and process listeners. Plugin/handler hot reload
+// remains enabled through the existing plugin watcher and reloadHandler().
