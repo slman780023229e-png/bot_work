@@ -34,7 +34,7 @@ global.packname = '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓'
 global.multiplier = 85
 
 // اكتب رقمك هنا الي تريد تربط بي البوت من دون + او فواصل 
-global.botNumberCode = "967783028397"
+global.botNumberCode = "967780023229"
 
 // روابط  السوشيال ميديا بتاعتي 
 global.yt = 'https://www.youtube.com/@kaneki-n2x'
