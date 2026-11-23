@@ -1,51 +1,42 @@
 import { MongoClient } from 'mongodb';
 import { initAuthCreds, BufferJSON, proto } from '@whiskeysockets/baileys';
 
-let clientPromise = null;
+let cachedClient = null;
+let cachedUri = null;
 
-async function getAuthCollection(options = {}) {
-  const uri = options.mongoUri || process.env.MONGO_URI;
+async function getCollection(mongoUri, collectionName = 'arthur_auth_state') {
+  const uri = mongoUri || process.env.MONGO_URI;
   if (!uri) {
-    throw new Error('MONGO_URI is missing. Please configure it in environment variables or GitHub Secrets.');
+    throw new Error('MONGO_URI is missing.');
   }
 
-  if (!clientPromise) {
-    const client = new MongoClient(uri, {
+  if (!cachedClient || cachedUri !== uri) {
+    if (cachedClient) {
+      await cachedClient.close().catch(() => {});
+    }
+    cachedClient = new MongoClient(uri, {
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 15000,
     });
-    clientPromise = client.connect();
+    await cachedClient.connect();
+    cachedUri = uri;
   }
 
-  const connectedClient = await clientPromise;
-  const dbName = options.dbName;
-  const db = dbName ? connectedClient.db(dbName) : connectedClient.db();
-  const collectionName = options.collectionName || 'arthur_auth_state';
-
-  return db.collection(collectionName);
+  return cachedClient.db().collection(collectionName);
 }
 
-const serialize = (value) => JSON.parse(JSON.stringify(value, BufferJSON.replacer));
+const serialize = (val) => JSON.parse(JSON.stringify(val, BufferJSON.replacer));
+const deserialize = (val) => (val ? JSON.parse(JSON.stringify(val), BufferJSON.reviver) : null);
 
-const deserialize = (value) => {
-  if (!value) return null;
-  return JSON.parse(JSON.stringify(value), BufferJSON.reviver);
-};
+export async function useMongoDBAuthState(mongoUri, sessionId = 'arthur-session') {
+  const collection = await getCollection(mongoUri);
 
-/**
- * مخزن جلسة Baileys مباشر في قاعدة بيانات MongoDB
- * @param {string} [sessionId='arthur_main']
- * @param {object} [options]
- */
-export async function useMongoAuthState(sessionId = 'arthur_main', options = {}) {
-  const collection = await getAuthCollection(options);
-
-  const readDoc = async (docId) => {
+  const readData = async (docId) => {
     const doc = await collection.findOne({ _id: `${sessionId}:${docId}` });
     return doc ? deserialize(doc.data) : null;
   };
 
-  const writeDoc = async (docId, data) => {
+  const writeData = async (docId, data) => {
     await collection.updateOne(
       { _id: `${sessionId}:${docId}` },
       {
@@ -60,60 +51,73 @@ export async function useMongoAuthState(sessionId = 'arthur_main', options = {})
     );
   };
 
-  const deleteDoc = async (docId) => {
+  const removeData = async (docId) => {
     await collection.deleteOne({ _id: `${sessionId}:${docId}` });
   };
 
-  const existingCreds = await readDoc('creds');
-  const creds = existingCreds || initAuthCreds();
-  if (!existingCreds) {
-    await writeDoc('creds', creds);
+  let creds = await readData('creds');
+  if (!creds) {
+    const masterDoc = await readData('master_creds');
+    if (masterDoc) {
+      creds = masterDoc;
+      await writeData('creds', creds);
+    } else {
+      creds = initAuthCreds();
+      await writeData('creds', creds);
+    }
   }
+
+  const saveCreds = async () => {
+    await writeData('creds', creds);
+  };
 
   return {
     state: {
       creds,
       keys: {
         get: async (type, ids) => {
-          const result = {};
+          const data = {};
           await Promise.all(
             ids.map(async (id) => {
-              let value = await readDoc(`${type}-${id}`);
+              let value = await readData(`${type}-${id}`);
               if (type === 'app-state-sync-key' && value) {
                 value = proto.Message.AppStateSyncKeyData.fromObject(value);
               }
-              result[id] = value;
+              data[id] = value;
             })
           );
-          return result;
+          return data;
         },
         set: async (data) => {
-          const ops = [];
+          const tasks = [];
           for (const category of Object.keys(data || {})) {
             const entries = data[category];
             if (!entries) continue;
-
             for (const id of Object.keys(entries)) {
               const value = entries[id];
               const docId = `${category}-${id}`;
               if (value) {
-                ops.push(writeDoc(docId, value));
+                tasks.push(writeData(docId, value));
               } else {
-                ops.push(deleteDoc(docId));
+                tasks.push(removeData(docId));
               }
             }
           }
-          await Promise.all(ops);
+          await Promise.all(tasks);
         },
       },
     },
-    saveCreds: async () => {
-      await writeDoc('creds', creds);
+    saveCreds,
+    createMasterSnapshot: async () => {
+      await writeData('master_creds', creds);
+    },
+    requestRePair: async () => {
+      await collection.deleteMany({ sessionId });
+    },
+    flush: async () => {
+      await saveCreds();
     },
   };
 }
 
-export async function clearMongoAuthState(sessionId = 'arthur_main', options = {}) {
-  const collection = await getAuthCollection(options);
-  await collection.deleteMany({ sessionId });
-}
+export const useMongoAuthState = useMongoDBAuthState;
