@@ -130,9 +130,8 @@ async function syncSessionToMongo(force = false) {
 
     if (ops.length) {
       await col.bulkWrite(ops, { ordered: false });
-      // احذف من قاعدة البيانات الملفات التي حذفها Baileys محلياً (مثل مفاتيح قديمة)،
-      // حتى تكون صورة الجلسة في MongoDB مطابقة للمجلد المحلي. لا ننفذ ذلك إذا كان المجلد فارغاً.
-      await col.deleteMany({ sessionId: SESSION_ID, fileName: { $nin: files } });
+      // حماية دائمة: لا نحذف أي ملف جلسة من MongoDB عند غيابه محلياً.
+      // يتم تحديث الملفات الموجودة فقط (upsert)، وتبقى النسخ البعيدة كاحتياط.
       lastSyncHash = snapshot;
     }
   } catch (error) {
