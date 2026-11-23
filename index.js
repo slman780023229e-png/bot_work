@@ -62,7 +62,7 @@ const { CONNECTING } = ws
 const { chain } = lodash
 
 // ============================================================
-// PATHS & MONGO AUTH CONFIG
+// PATHS & SESSION AUTH CONFIG
 // ============================================================
 
 global.__filename = function filename(pathURL = import.meta.url, rmPrefix = platform !== 'win32') {
@@ -85,9 +85,9 @@ const PORT = process.env.PORT || process.env.SERVER_PORT || 3000
 const sessionDir = path.join(__dirname, 'ملف_الاتصال')
 const dataDir = path.join(__dirname, 'data')
 
-const MONGO_URI = process.env.MONGO_URI || ''
-const MONGO_SESSION_ID = process.env.MONGO_SESSION_ID || 'arthur-session'
-const useMongoSession = Boolean(MONGO_URI && MONGO_URI.trim() !== '')
+const UPSTASH_REDIS_REST_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim()
+const UPSTASH_REDIS_REST_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim()
+const useUpstashSession = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN)
 
 global.creds = 'creds.json'
 global.authFile = 'ArthurSession'
@@ -320,8 +320,8 @@ try {
     console.log(chalk.gray('ℹ️ سيتم استخدام مجلد ملف_الاتصال كمسار موحد لملفات الجلسة.'))
   }
 
-  if (useMongoSession) console.log(chalk.green('🍃 MongoDB configured: session files will be synchronized by start.js.'))
-  else console.log(chalk.yellow('⚠️ MONGO_URI غير مضبوط؛ سيعمل الاتصال محلياً ولن تتم مزامنته إلى قاعدة البيانات.'))
+  if (useUpstashSession) console.log(chalk.green('🗄️ Upstash Redis configured: session files will be synchronized by start.js.'))
+  else console.log(chalk.yellow('⚠️ إعدادات Upstash Redis غير مضبوطة؛ سيعمل الاتصال محلياً ولن تتم مزامنته إلى قاعدة البيانات.'))
 } catch (e) {
   console.log(chalk.red('⚠️ خطأ في معالجة مسار الجلسة: ' + e.message))
 }
@@ -911,7 +911,7 @@ async function startBot() {
     console.log(gold('╚══════════════════════════════════════════════╝\n'))
 
     // المسار الموحد: Baileys يكتب ملفات الاتصال محلياً هنا، وstart.js
-    // يستعيدها من MongoDB ويزامن كل تغيّر إلى arthur_session_files.
+    // يستعيدها من Upstash Redis ويزامن كل تغيّر إلى الجلسة.
     const authStore = await useMultiFileAuthState(sessionDir)
 
     currentAuthStore = authStore
@@ -1119,7 +1119,7 @@ async function gracefulShutdown(signal) {
   try {
     if (currentAuthStore?.flush) await currentAuthStore.flush()
   } catch (error) {
-    console.error(chalk.red('❌ Final MongoDB auth flush failed:'), error?.message || error)
+    console.error(chalk.red('❌ Final session flush failed:'), error?.message || error)
   }
 
   try {
