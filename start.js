@@ -3,16 +3,17 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
-import { MongoClient } from 'mongodb';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ENTRY_FILE = path.join(__dirname, 'index.js');
 const SESSION_DIR = path.join(__dirname, 'ملف_الاتصال');
-const SESSION_ID = process.env.MONGO_SESSION_ID || 'arthur-session';
-const SESSION_COLLECTION = 'arthur_session_files';
+const SESSION_ID = process.env.REDIS_SESSION_ID || 'arthur-session';
 const RESTART_DELAY = 3000;
-const SYNC_INTERVAL = 15000; // مزامنة الجلسة مع MongoDB كل 15 ثانية
+const SYNC_INTERVAL = 15000; // مزامنة الجلسة مع Upstash Redis كل 15 ثانية
+
+const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 
 const gold = chalk.hex('#D4AF37');
 const red = chalk.hex('#C62828');
@@ -25,30 +26,63 @@ let restartTimer = null;
 let syncTimer = null;
 let shuttingDown = false;
 let launching = false;
-let mongoClient = null;
 let lastSyncHash = '';
 
-async function getSessionCollection() {
-  const uri = process.env.MONGO_URI;
-  if (!uri) return null;
-
-  if (!mongoClient) {
-    mongoClient = new MongoClient(uri, {
-      maxPoolSize: 5,
-      serverSelectionTimeoutMS: 15000,
-    });
-    await mongoClient.connect();
-  }
-  const collection = mongoClient.db().collection(SESSION_COLLECTION);
-  await collection.createIndex({ sessionId: 1 });
-  return collection;
+function isUpstashConfigured() {
+  return Boolean(UPSTASH_URL && UPSTASH_TOKEN);
 }
 
-async function restoreSessionFromMongo() {
+async function upstashCommand(commandArgs) {
+  const response = await fetch(UPSTASH_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${UPSTASH_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(commandArgs),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(data.error);
+  }
+  return data.result;
+}
+
+async function upstashPipeline(commands) {
+  if (!commands.length) return [];
+  const response = await fetch(`${UPSTASH_URL}/pipeline`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${UPSTASH_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(commands),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Pipeline HTTP ${response.status}: ${errText || response.statusText}`);
+  }
+
+  const results = await response.json();
+  for (const item of results) {
+    if (item && item.error) {
+      throw new Error(item.error);
+    }
+  }
+  return results;
+}
+
+async function restoreSessionFromUpstash() {
   try {
-    const col = await getSessionCollection();
-    if (!col) {
-      console.log(chalk.yellow('⚠️ MONGO_URI غير مضبوط؛ سيتم الاعتماد على الجلسة المحلية فقط.'));
+    if (!isUpstashConfigured()) {
+      console.log(chalk.yellow('⚠️ بيانات Upstash Redis غير مضبوطة؛ سيتم الاعتماد على الجلسة المحلية فقط.'));
       return;
     }
 
@@ -57,43 +91,43 @@ async function restoreSessionFromMongo() {
     // لا تستبدل جلسة محلية موجودة بنسخة قديمة من قاعدة البيانات.
     // عند التشغيل على بيئة جديدة (بدون creds.json) نستعيد النسخة المحفوظة.
     if (fs.existsSync(path.join(SESSION_DIR, 'creds.json'))) {
-      console.log(gray('ℹ️ توجد جلسة محلية؛ سيتم الحفاظ عليها ومزامنتها إلى MongoDB.'));
+      console.log(gray('ℹ️ توجد جلسة محلية؛ سيتم الحفاظ عليها ومزامنتها إلى Upstash Redis.'));
       return;
     }
 
-    let docs = await col.find({ sessionId: SESSION_ID }).toArray();
-    // توافق رجعي مع النسخ السابقة التي خزّنت ملفات الجلسة تحت sessionId=default.
-    if (!docs.length && SESSION_ID !== 'default') {
-      docs = await col.find({ sessionId: 'default' }).toArray();
-      if (docs.length) console.log(gray('ℹ️ تم العثور على جلسة قديمة (default) وسيتم ترحيلها إلى معرف الجلسة الحالي عند المزامنة.'));
-    }
-    if (!docs.length) {
-      console.log(gray('ℹ️ لا توجد جلسة محفوظة في MongoDB بعد؛ سيتم حفظها بعد أول ربط.'));
+    const hashKey = `arthur:session:${SESSION_ID}`;
+    const storedFiles = await upstashCommand(['HGETALL', hashKey]);
+
+    if (!Array.isArray(storedFiles) || storedFiles.length === 0) {
+      console.log(gray('ℹ️ لا توجد جلسة محفوظة في Upstash Redis بعد؛ سيتم حفظها بعد أول ربط.'));
       return;
     }
 
     let restored = 0;
-    for (const doc of docs) {
-      if (!doc.fileName || typeof doc.content !== 'string') continue;
-      // Only restore plain file names; never allow a stored path to escape SESSION_DIR.
-      if (path.basename(doc.fileName) !== doc.fileName) continue;
-      const targetPath = path.join(SESSION_DIR, doc.fileName);
-      fs.writeFileSync(targetPath, Buffer.from(doc.content, 'base64'));
+    for (let i = 0; i < storedFiles.length; i += 2) {
+      const fileName = storedFiles[i];
+      const content = storedFiles[i + 1];
+      if (!fileName || typeof content !== 'string') continue;
+      // حماية المسار: استعادة أسماء الملفات المباشرة فقط داخل مجلد الجلسة
+      if (path.basename(fileName) !== fileName) continue;
+
+      const targetPath = path.join(SESSION_DIR, fileName);
+      fs.writeFileSync(targetPath, Buffer.from(content, 'base64'));
       restored++;
     }
-    console.log(green(`🗄️ [MongoDB] تم استعادة ${restored} ملف من ملفات الجلسة بنجاح.`));
+
+    console.log(green(`🗄️ [Upstash Redis] تم استعادة ${restored} ملف من ملفات الجلسة بنجاح.`));
   } catch (error) {
-    console.error(red(`❌ فشل استعادة الجلسة من MongoDB: ${error.message}`));
+    console.error(red(`❌ فشل استعادة الجلسة من Upstash Redis: ${error.message}`));
     // لا تبدأ بجلسة فارغة إذا كانت قاعدة البيانات مضبوطة لكن تعذر الوصول إليها؛
     // هذا يمنع إنشاء جلسة جديدة فوق جلسة محفوظة لا نستطيع قراءتها.
-    if (process.env.MONGO_URI) throw error;
+    if (isUpstashConfigured()) throw error;
   }
 }
 
-async function syncSessionToMongo(force = false) {
+async function syncSessionToUpstash(force = false) {
   try {
-    const col = await getSessionCollection();
-    if (!col || !fs.existsSync(SESSION_DIR)) return;
+    if (!isUpstashConfigured() || !fs.existsSync(SESSION_DIR)) return;
 
     const files = fs.readdirSync(SESSION_DIR, { withFileTypes: true })
       .filter((entry) => entry.isFile())
@@ -110,32 +144,22 @@ async function syncSessionToMongo(force = false) {
 
     if (!force && snapshot === lastSyncHash) return;
 
-    const ops = files.map((fileName) => {
-      const content = fs.readFileSync(path.join(SESSION_DIR, fileName)).toString('base64');
-      return {
-        updateOne: {
-          filter: { _id: `${SESSION_ID}:${fileName}` },
-          update: {
-            $set: {
-              sessionId: SESSION_ID,
-              fileName,
-              content,
-              updatedAt: new Date(),
-            },
-          },
-          upsert: true,
-        },
-      };
-    });
+    const hashKey = `arthur:session:${SESSION_ID}`;
+    const commands = [];
 
-    if (ops.length) {
-      await col.bulkWrite(ops, { ordered: false });
-      // حماية دائمة: لا نحذف أي ملف جلسة من MongoDB عند غيابه محلياً.
-      // يتم تحديث الملفات الموجودة فقط (upsert)، وتبقى النسخ البعيدة كاحتياط.
+    for (const fileName of files) {
+      const content = fs.readFileSync(path.join(SESSION_DIR, fileName)).toString('base64');
+      commands.push(['HSET', hashKey, fileName, content]);
+    }
+
+    if (commands.length) {
+      await upstashPipeline(commands);
+      // حماية دائمة: لا نحذف أي ملف جلسة من Upstash عند غيابه محلياً.
+      // يتم تحديث الملفات الموجودة فقط، وتبقى النسخ البعيدة كاحتياط.
       lastSyncHash = snapshot;
     }
   } catch (error) {
-    console.error(chalk.yellow(`⚠️ تعذرت مزامنة الجلسة مع MongoDB: ${error.message}`));
+    console.error(chalk.yellow(`⚠️ تعذرت مزامنة الجلسة مع Upstash Redis: ${error.message}`));
   }
 }
 
@@ -206,7 +230,7 @@ async function launchBot() {
   }
 
   console.clear();
-  await restoreSessionFromMongo();
+  await restoreSessionFromUpstash();
   protectSessions();
   clearTemporaryFiles();
   showBanner();
@@ -222,14 +246,14 @@ async function launchBot() {
   console.log('');
   console.log(green('✓ ARTHUR BOT IS STARTING'));
   console.log(gray('ENTRY: index.js'));
-  console.log(gray(process.env.MONGO_URI ? `DATABASE: MongoDB Session Sync Active (${SESSION_COLLECTION}/${SESSION_ID})` : 'DATABASE: Local session only (MONGO_URI is not configured)'));
+  console.log(gray(isUpstashConfigured() ? `DATABASE: Upstash Redis Sync Active (${SESSION_ID})` : 'DATABASE: Local session only (Upstash credentials not configured)'));
   console.log('');
 
   if (syncTimer) clearInterval(syncTimer);
   // مزامنة أولية بعد بدء العملية، ثم متابعة التغييرات دورياً.
-  syncSessionToMongo(true).catch(() => {});
+  syncSessionToUpstash(true).catch(() => {});
   syncTimer = setInterval(() => {
-    syncSessionToMongo(false).catch(() => {});
+    syncSessionToUpstash(false).catch(() => {});
   }, SYNC_INTERVAL);
 
   try {
@@ -249,7 +273,7 @@ async function launchBot() {
         clearInterval(syncTimer);
         syncTimer = null;
       }
-      await syncSessionToMongo(true);
+      await syncSessionToUpstash(true);
 
       if (shuttingDown) return;
       console.log('');
@@ -283,8 +307,7 @@ async function shutdown(signal) {
     await sleep(1000);
   }
 
-  await syncSessionToMongo(true);
-  if (mongoClient) await mongoClient.close().catch(() => {});
+  await syncSessionToUpstash(true);
   process.exit(0);
 }
 
