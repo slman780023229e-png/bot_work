@@ -1,4 +1,3 @@
-
 {
   "name": "arthur-bot-md",
   "version": "2.0.0",
@@ -37,6 +36,7 @@
     "jszip": "^3.10.1",
     "lowdb": "^3.0.0",
     "meowsab": "https://github.com/deveni0/ws/tarball/main",
+    "mongodb": "^6.12.0",
     "moment-timezone": "^0.5.34",
     "node-cache": "^5.1.2",
     "node-fetch": "^3.2.0",
