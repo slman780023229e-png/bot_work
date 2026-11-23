@@ -9,6 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ENTRY_FILE = path.join(__dirname, 'index.js');
 const SESSION_DIR = path.join(__dirname, 'ملف_الاتصال');
+const SESSION_ID = process.env.MONGO_SESSION_ID || 'arthur-session';
+const SESSION_COLLECTION = 'arthur_session_files';
 const RESTART_DELAY = 3000;
 const SYNC_INTERVAL = 15000; // مزامنة الجلسة مع MongoDB كل 15 ثانية
 
@@ -37,7 +39,9 @@ async function getSessionCollection() {
     });
     await mongoClient.connect();
   }
-  return mongoClient.db().collection('arthur_session_files');
+  const collection = mongoClient.db().collection(SESSION_COLLECTION);
+  await collection.createIndex({ sessionId: 1 });
+  return collection;
 }
 
 async function restoreSessionFromMongo() {
@@ -48,23 +52,41 @@ async function restoreSessionFromMongo() {
       return;
     }
 
-    const docs = await col.find({ sessionId: 'default' }).toArray();
-    if (!docs.length) {
-      console.log(gray('ℹ️ لا توجد جلسة محفوظة في MongoDB بعد (سيتم حفظها تلقائياً بعد أول ربط).'));
+    fs.mkdirSync(SESSION_DIR, { recursive: true });
+
+    // لا تستبدل جلسة محلية موجودة بنسخة قديمة من قاعدة البيانات.
+    // عند التشغيل على بيئة جديدة (بدون creds.json) نستعيد النسخة المحفوظة.
+    if (fs.existsSync(path.join(SESSION_DIR, 'creds.json'))) {
+      console.log(gray('ℹ️ توجد جلسة محلية؛ سيتم الحفاظ عليها ومزامنتها إلى MongoDB.'));
       return;
     }
 
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
+    let docs = await col.find({ sessionId: SESSION_ID }).toArray();
+    // توافق رجعي مع النسخ السابقة التي خزّنت ملفات الجلسة تحت sessionId=default.
+    if (!docs.length && SESSION_ID !== 'default') {
+      docs = await col.find({ sessionId: 'default' }).toArray();
+      if (docs.length) console.log(gray('ℹ️ تم العثور على جلسة قديمة (default) وسيتم ترحيلها إلى معرف الجلسة الحالي عند المزامنة.'));
+    }
+    if (!docs.length) {
+      console.log(gray('ℹ️ لا توجد جلسة محفوظة في MongoDB بعد؛ سيتم حفظها بعد أول ربط.'));
+      return;
+    }
+
+    let restored = 0;
     for (const doc of docs) {
       if (!doc.fileName || typeof doc.content !== 'string') continue;
       // Only restore plain file names; never allow a stored path to escape SESSION_DIR.
       if (path.basename(doc.fileName) !== doc.fileName) continue;
       const targetPath = path.join(SESSION_DIR, doc.fileName);
       fs.writeFileSync(targetPath, Buffer.from(doc.content, 'base64'));
+      restored++;
     }
-    console.log(green(`🗄️ [MongoDB] تم استعادة ${docs.length} ملف من ملفات الجلسة بنجاح.`));
+    console.log(green(`🗄️ [MongoDB] تم استعادة ${restored} ملف من ملفات الجلسة بنجاح.`));
   } catch (error) {
     console.error(red(`❌ فشل استعادة الجلسة من MongoDB: ${error.message}`));
+    // لا تبدأ بجلسة فارغة إذا كانت قاعدة البيانات مضبوطة لكن تعذر الوصول إليها؛
+    // هذا يمنع إنشاء جلسة جديدة فوق جلسة محفوظة لا نستطيع قراءتها.
+    if (process.env.MONGO_URI) throw error;
   }
 }
 
@@ -83,7 +105,7 @@ async function syncSessionToMongo(force = false) {
     const snapshot = files.map((fileName) => {
       const fullPath = path.join(SESSION_DIR, fileName);
       const stat = fs.statSync(fullPath);
-      return `${fileName}:${stat.size}:${Math.floor(stat.mtimeMs)}`;
+      return `${fileName}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
     }).join('|');
 
     if (!force && snapshot === lastSyncHash) return;
@@ -92,10 +114,10 @@ async function syncSessionToMongo(force = false) {
       const content = fs.readFileSync(path.join(SESSION_DIR, fileName)).toString('base64');
       return {
         updateOne: {
-          filter: { _id: `default:${fileName}` },
+          filter: { _id: `${SESSION_ID}:${fileName}` },
           update: {
             $set: {
-              sessionId: 'default',
+              sessionId: SESSION_ID,
               fileName,
               content,
               updatedAt: new Date(),
@@ -108,8 +130,9 @@ async function syncSessionToMongo(force = false) {
 
     if (ops.length) {
       await col.bulkWrite(ops, { ordered: false });
-      // Deliberately do not delete remote session files during synchronization.
-      // A partial/local folder must never erase a recoverable MongoDB backup.
+      // احذف من قاعدة البيانات الملفات التي حذفها Baileys محلياً (مثل مفاتيح قديمة)،
+      // حتى تكون صورة الجلسة في MongoDB مطابقة للمجلد المحلي. لا ننفذ ذلك إذا كان المجلد فارغاً.
+      await col.deleteMany({ sessionId: SESSION_ID, fileName: { $nin: files } });
       lastSyncHash = snapshot;
     }
   } catch (error) {
@@ -200,10 +223,12 @@ async function launchBot() {
   console.log('');
   console.log(green('✓ ARTHUR BOT IS STARTING'));
   console.log(gray('ENTRY: index.js'));
-  console.log(gray('DATABASE: MongoDB Session Sync Active'));
+  console.log(gray(process.env.MONGO_URI ? `DATABASE: MongoDB Session Sync Active (${SESSION_COLLECTION}/${SESSION_ID})` : 'DATABASE: Local session only (MONGO_URI is not configured)'));
   console.log('');
 
   if (syncTimer) clearInterval(syncTimer);
+  // مزامنة أولية بعد بدء العملية، ثم متابعة التغييرات دورياً.
+  syncSessionToMongo(true).catch(() => {});
   syncTimer = setInterval(() => {
     syncSessionToMongo(false).catch(() => {});
   }, SYNC_INTERVAL);
