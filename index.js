@@ -58,14 +58,6 @@ const {
   Browsers
 } = await import('@whiskeysockets/baileys')
 
-let useMongoDBAuthState = null
-try {
-  const mongoAuthMod = await import('./mongoAuth.js')
-  useMongoDBAuthState = mongoAuthMod.useMongoDBAuthState
-} catch {
-  useMongoDBAuthState = null
-}
-
 const { CONNECTING } = ws
 const { chain } = lodash
 
@@ -95,7 +87,7 @@ const dataDir = path.join(__dirname, 'data')
 
 const MONGO_URI = process.env.MONGO_URI || ''
 const MONGO_SESSION_ID = process.env.MONGO_SESSION_ID || 'arthur-session'
-const useMongoSession = Boolean(MONGO_URI && MONGO_URI.trim() !== '' && typeof useMongoDBAuthState === 'function')
+const useMongoSession = Boolean(MONGO_URI && MONGO_URI.trim() !== '')
 
 global.creds = 'creds.json'
 global.authFile = 'ArthurSession'
@@ -302,29 +294,36 @@ global.db
   })
 
 // ============================================================
-// SESSION RESTORE CONDITION (ملف_الاتصال / ENV / MONGO)
+// SESSION RESTORE CONDITION (مسار محلي موحد تتم مزامنته عبر start.js)
 // ============================================================
 
-if (!useMongoSession) {
-  try {
-    fs.mkdirSync(sessionDir, { recursive: true })
-    const envCredsPath = path.join(sessionDir, 'creds.json')
+try {
+  fs.mkdirSync(sessionDir, { recursive: true })
 
-    if (
-      !fs.existsSync(envCredsPath) &&
-      process.env.SESSION_DATA &&
-      process.env.SESSION_DATA.trim() !== ''
-    ) {
-      fs.writeFileSync(envCredsPath, process.env.SESSION_DATA, 'utf-8')
-      console.log(chalk.green('✅ تم تحميل الجلسة من متغير البيئة لعدم وجود ملف اتصال محلي.'))
-    } else {
-      console.log(chalk.gray('ℹ️ تم الاعتماد على ملف الاتصال المحلي الموجود مسبقاً ولم يتم فرض متغير البيئة.'))
+  // ترحيل الجلسة القديمة إلى المسار الموحد مرة واحدة، دون حذف الأصل.
+  const legacySessionDir = path.join(__dirname, global.authFile)
+  const localCredsPath = path.join(sessionDir, 'creds.json')
+  if (!fs.existsSync(localCredsPath) && fs.existsSync(path.join(legacySessionDir, 'creds.json'))) {
+    for (const entry of fs.readdirSync(legacySessionDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue
+      const from = path.join(legacySessionDir, entry.name)
+      const to = path.join(sessionDir, entry.name)
+      if (!fs.existsSync(to)) fs.copyFileSync(from, to)
     }
-  } catch (e) {
-    console.log(chalk.red('⚠️ خطأ في معالجة مسار الجلسة: ' + e.message))
+    console.log(chalk.green('✅ تم نقل نسخة من الجلسة القديمة إلى مجلد ملف_الاتصال مع الحفاظ على الأصل.'))
   }
-} else {
-  console.log(chalk.green('🍃 تم تفعيل حفظ جلسة واتساب عبر MongoDB.'))
+
+  if (!fs.existsSync(localCredsPath) && process.env.SESSION_DATA?.trim()) {
+    fs.writeFileSync(localCredsPath, process.env.SESSION_DATA, 'utf-8')
+    console.log(chalk.green('✅ تم تحميل الجلسة من متغير البيئة لعدم وجود ملف اتصال محلي.'))
+  } else {
+    console.log(chalk.gray('ℹ️ سيتم استخدام مجلد ملف_الاتصال كمسار موحد لملفات الجلسة.'))
+  }
+
+  if (useMongoSession) console.log(chalk.green('🍃 MongoDB configured: session files will be synchronized by start.js.'))
+  else console.log(chalk.yellow('⚠️ MONGO_URI غير مضبوط؛ سيعمل الاتصال محلياً ولن تتم مزامنته إلى قاعدة البيانات.'))
+} catch (e) {
+  console.log(chalk.red('⚠️ خطأ في معالجة مسار الجلسة: ' + e.message))
 }
 
 // ============================================================
@@ -612,7 +611,10 @@ async function filesInit() {
       const module = await import(file)
       global.plugins[filename] = module.default || module
     } catch (e) {
-      conn.logger?.error?.(e) || console.error(e)
+      // لا تستخدم conn هنا: قد لا يكون الاتصال قد أُنشئ بعد أثناء تحميل الإضافات.
+      const pluginError = e?.stack || e?.message || e
+      console.error(`[PLUGIN LOAD ERROR] ${filename}:`, pluginError)
+      global.conn?.logger?.error?.(`[PLUGIN LOAD ERROR] ${filename}: ${pluginError}`)
       delete global.plugins[filename]
     }
   }
@@ -676,7 +678,7 @@ async function connectionUpdate(update) {
     console.log(chalk.yellow('🔄 Connecting to WhatsApp...'))
   }
 
-  if (connection === 'close' && !existsSync(`./${global.authFile}/creds.json`) && !useMongoSession) {
+  if (connection === 'close' && !existsSync(path.join(sessionDir, 'creds.json'))) {
     if (!printingNoConn) {
       printingNoConn = true
       await logCritical(chalk.bold.redBright('⚠️ NO CONNECTION, DELETE PrototypeSession FOLDER AND SCAN QR CODE ⚠️'))
@@ -696,14 +698,6 @@ async function connectionUpdate(update) {
     console.log(chalk.green.bold('\n╭──────────────────────────────╮'))
     console.log(chalk.green.bold('│   🟢 ARTHUR BOT IS ONLINE     │'))
     console.log(chalk.green.bold('╰──────────────────────────────╯\n'))
-
-    if (useMongoSession && typeof currentAuthStore?.createMasterSnapshot === 'function') {
-      try {
-        await currentAuthStore.createMasterSnapshot()
-      } catch (snapshotError) {
-        console.error(chalk.red('❌ MASTER snapshot creation failed:'), snapshotError?.stack || snapshotError?.message || snapshotError)
-      }
-    }
 
     try {
       if (global.conn?.user?.id) {
@@ -906,7 +900,7 @@ async function startBot() {
     if (!fs.existsSync(global.rutaJadiBot)) fs.mkdirSync(global.rutaJadiBot, { recursive: true })
     if (!fs.existsSync(respaldoDir)) fs.mkdirSync(respaldoDir, { recursive: true })
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
-    if (!useMongoSession && !fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
+    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
 
     const gold = chalk.hex('#D4AF37')
     const blood = chalk.hex('#B32632')
@@ -916,10 +910,9 @@ async function startBot() {
     console.log(gold('║') + chalk.gray('              CORE SESSION INITIALIZING       ') + gold('║'))
     console.log(gold('╚══════════════════════════════════════════════╝\n'))
 
-    const activeAuthTarget = useMongoSession ? 'mongo' : fs.existsSync(join(sessionDir, 'creds.json')) ? sessionDir : global.authFile
-    const authStore = useMongoSession
-      ? await useMongoDBAuthState(MONGO_URI, MONGO_SESSION_ID)
-      : await useMultiFileAuthState(activeAuthTarget)
+    // المسار الموحد: Baileys يكتب ملفات الاتصال محلياً هنا، وstart.js
+    // يستعيدها من MongoDB ويزامن كل تغيّر إلى arthur_session_files.
+    const authStore = await useMultiFileAuthState(sessionDir)
 
     currentAuthStore = authStore
     const { state, saveCreds } = authStore
