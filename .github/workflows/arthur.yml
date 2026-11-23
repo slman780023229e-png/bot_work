@@ -3,176 +3,52 @@ name: ARTHUR BOT Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 */4 * * *'
+    # تشغيل دوري كل خمس ساعات لتجنب تداخل التشغيلات الطويلة
+    - cron: '0 */5 * * *'
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 concurrency:
   group: arthur-whatsapp-bot
   cancel-in-progress: false
 
 jobs:
-  build-and-run:
+  run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 270
-    environment: MONGO_URI
+    # أقل من فترة الجدولة، حتى لا تتراكم عمليات التشغيل
+    timeout-minutes: 280
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      MONGO_SESSION_ID: arthur-session
 
     steps:
-      - name: Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      - name: Install Dependencies
-        run: npm install
-
-      - name: Run Bot with Automatic Repository Saving
-        env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          ARTHUR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - name: Verify MongoDB configuration
         shell: bash
         run: |
-          set +e
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           if [ -z "${MONGO_URI:-}" ]; then
-            echo "Warning: MONGO_URI is not set. Session persistence via database will not work."
+            echo "ERROR: GitHub Secret MONGO_URI is missing. Refusing to start with local-only session storage."
+            exit 1
+          fi
+          echo "MongoDB secret is present. Its value will not be printed."
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
           else
-            echo "Database session mode enabled (MONGO_URI configured)."
+            npm install --no-audit --no-fund
           fi
 
-          # حماية: انشاء .gitignore اذا مو موجود، عشان ما يرفع المكتبة او ملفات الجلسة ابدا
-          if [ ! -f .gitignore ]; then
-            touch .gitignore
-          fi
-          grep -qxF "node_modules/" .gitignore || echo "node_modules/" >> .gitignore
-          grep -qxF "**/node_modules/" .gitignore || echo "**/node_modules/" >> .gitignore
-          grep -qxF "yuno_bot/node_modules/" .gitignore || echo "yuno_bot/node_modules/" >> .gitignore
-          grep -qxF ".env" .gitignore || echo ".env" >> .gitignore
-          grep -qxF ".env.*" .gitignore || echo ".env.*" >> .gitignore
-          grep -qxF "ملف_الاتصال/" .gitignore || echo "ملف_الاتصال/" >> .gitignore
-          grep -qxF "**/ملف_الاتصال/" .gitignore || echo "**/ملف_الاتصال/" >> .gitignore
-          grep -qxF "auth_info_baileys/" .gitignore || echo "auth_info_baileys/" >> .gitignore
-          grep -qxF "**/auth_info_baileys/" .gitignore || echo "**/auth_info_baileys/" >> .gitignore
-          grep -qxF "**/creds.json" .gitignore || echo "**/creds.json" >> .gitignore
-
-          save_changes() {
-            echo "Checking repository changes..."
-
-            # اهم خطوة: حذف المكتبة والملفات الحساسة من التتبع اذا كانت مرفوعة بالغلط، بدون حذفها من السيرفر
-            git rm -r --cached --ignore-unmatch node_modules yuno_bot/node_modules "ملف_الاتصال" auth_info_baileys 2>/dev/null || true
-            git rm --cached --ignore-unmatch .env .env.* "**/creds.json" "**/*.pem" "**/*.key" 2>/dev/null || true
-
-            git add -A -- . \
-              ':(exclude).gitignore' \
-              ':(exclude)ملف_الاتصال' \
-              ':(exclude)ملف_الاتصال/**' \
-              ':(exclude)**/ملف_الاتصال' \
-              ':(exclude)**/ملف_الاتصال/**' \
-              ':(exclude).env' \
-              ':(exclude).env.*' \
-              ':(exclude)**/.env' \
-              ':(exclude)**/.env.*' \
-              ':(exclude)node_modules' \
-              ':(exclude)node_modules/**' \
-              ':(exclude)yuno_bot/node_modules' \
-              ':(exclude)yuno_bot/node_modules/**' \
-              ':(exclude)**/node_modules' \
-              ':(exclude)**/node_modules/**' \
-              ':(exclude)auth_info_baileys' \
-              ':(exclude)auth_info_baileys/**' \
-              ':(exclude)**/auth_info_baileys' \
-              ':(exclude)**/auth_info_baileys/**' \
-              ':(exclude)**/creds.json' \
-              ':(exclude)**/*.session' \
-              ':(exclude)**/session' \
-              ':(exclude)**/session/**' \
-              ':(exclude)**/*.pem' \
-              ':(exclude)**/*.key' \
-              ':(exclude)**/*.p12' \
-              ':(exclude)**/*.pfx' \
-              ':(exclude)**/*.log' \
-              ':(exclude)**/temp/**' || return 1
-
-            # تأكد ان .gitignore نفسه يترفع عشان الحماية تستمر
-            git add .gitignore || true
-
-            if ! git diff --cached --quiet; then
-              git commit -m "Auto-save ARTHUR repository progress" || return 1
-            else
-              echo "No new changes to commit."
-              return 0
-            fi
-
-            git fetch origin \
-              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
-
-            if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
-              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
-                echo "Push failed; synchronizing with GitHub..."
-                git fetch origin \
-                  "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
-                git -c rebase.autoStash=true rebase \
-                  "origin/${GITHUB_REF_NAME}" || {
-                    git rebase --abort || true
-                    echo "Sync conflict. Changes remain in the runner."
-                    return 1
-                  }
-                git push origin "HEAD:${GITHUB_REF_NAME}" || return 1
-              fi
-              echo "Repository changes saved successfully."
-            else
-              echo "No new commits to push."
-            fi
-          }
-
-          cleanup_and_exit() {
-            echo "Shutting down runner. Attempting final save..."
-            if [ -n "${BOT_PID:-}" ]; then
-              kill -TERM "$BOT_PID" 2>/dev/null || true
-              wait "$BOT_PID" 2>/dev/null || true
-            fi
-            save_changes || echo "Final save failed."
-            exit "${1:-0}"
-          }
-
-          trap 'cleanup_and_exit 0' SIGTERM SIGINT
-
-          echo "ARTHUR BOT supervisor started. Auto-save interval: 5 minutes."
-
-          while true; do
-            node start.js &
-            BOT_PID=$!
-            echo "ARTHUR BOT started (PID: $BOT_PID)."
-            LAST_SAVE=$(date +%s)
-            while kill -0 "$BOT_PID" 2>/dev/null; do
-              sleep 5
-              NOW=$(date +%s)
-              if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
-                if kill -0 "$BOT_PID" 2>/dev/null; then
-                  save_changes || echo "Auto-save failed; will retry later."
-                fi
-                LAST_SAVE=$(date +%s)
-              fi
-            done
-            wait "$BOT_PID"
-            BOT_STATUS=$?
-            BOT_PID=""
-            echo "Bot exited with status $BOT_STATUS. Saving progress and restarting immediately..."
-            save_changes || echo "Save after exit failed."
-            sleep 2
-          done
+      - name: Start ARTHUR BOT with MongoDB session persistence
+        run: node start.js
