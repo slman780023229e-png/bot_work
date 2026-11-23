@@ -1,5 +1,5 @@
 // plugins/اوامر.js
-// ARTHUR BOT - هجين ق + tags - مضمون - زخرفة خفيفة
+// ARTHUR BOT - صورة + قائمة في رسالة واحدة - الضغطة تشتغل
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -14,6 +14,8 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
+
+// ✅ رابط الصورة حقك من قبل - اذا سويت .دايم بيصير هو اللي يشتغل تلقائي
 const MENU_IMAGE = 'https://files.catbox.moe/xxxxxx.jpg'
 
 const Q_NAMES = {
@@ -60,21 +62,6 @@ const getIcon = (name) => {
     if (n.includes('ايديت') || n.includes('اغاني')) return '🎬'
     return '📂'
 }
-const getDesc = (name) => {
-    let n = normalize(name)
-    if (n.includes('جروبات') || n.includes('مشرفين')) return 'إدارة وحماية الجروبات'
-    if (n.includes('تحميل')) return 'تحميل الفيديوهات والصور والملفات'
-    if (n.includes('ترفيه')) return 'أوامر المرح والتفاعل'
-    if (n.includes('العاب')) return 'ألعاب وتحديات'
-    if (n.includes('نقابات')) return 'أوامر النقابات وإدارة النقابة'
-    if (n.includes('ادوات')) return 'أدوات ومميزات البوت'
-    if (n.includes('ايديت') || n.includes('اغاني')) return 'الإيديت والموسيقى والأغاني'
-    if (n.includes('مطور')) return 'أوامر التحكم والمطور'
-    if (n.includes('نخب')) return 'أوامر حصرية وخاصة'
-    if (n.includes('دين') || n.includes('اسلامي')) return 'آيات وأذكار وخدمات إيمانية'
-    if (n.includes('حماي')) return 'حماية وأمان المجموعات'
-    return 'أقسام وأوامر البوت'
-}
 
 function getQSections() {
     let files = []
@@ -91,7 +78,7 @@ function getQSections() {
             if (!/^ق\d+$/.test(key)) continue
             if (sections.find(s => s.key === key)) continue
             let info = Q_NAMES[key] || { title: `قسم ${key}`, desc: 'أقسام وأوامر البوت', icon: '📂' }
-            sections.push({ type: 'q', key, id: `.${key}`, title: info.title, desc: info.desc, icon: info.icon, file })
+            sections.push({ type: 'q', key, title: info.title, desc: info.desc, icon: info.icon })
             break
         }
     }
@@ -140,19 +127,57 @@ async function getAllSections() {
     let tagSections = []
     for (let cat of Object.keys(tagGrouped)) {
         if (qTitles.has(normalize(cat))) continue
-        tagSections.push({
-            type: 'tag',
-            key: cat,
-            id: `.قسم ${cat}`,
-            title: cat,
-            desc: `${getDesc(cat)} (${tagGrouped[cat].length})`,
-            icon: getIcon(cat),
-            cmds: tagGrouped[cat]
-        })
+        tagSections.push({ type: 'tag', key: cat, title: cat, icon: getIcon(cat), cmds: tagGrouped[cat] })
     }
     tagSections.sort((a, b) => a.title.localeCompare(b.title, 'ar'))
-    let all = [...qSections, ...tagSections]
-    return { all, qSections, tagGrouped, tagSections }
+    return { all: [...qSections, ...tagSections], qSections, tagGrouped, tagSections }
+}
+
+// تحويل الضغطة لأمر
+function convertClick(m) {
+    let selectedId = ''
+    if (m.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
+        selectedId = m.message.listResponseMessage.singleSelectReply.selectedRowId
+    } else if (m.message?.interactiveResponseMessage?.body?.text) {
+        selectedId = m.message.interactiveResponseMessage.body.text
+    } else if (m.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
+        try {
+            let p = JSON.parse(m.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
+            selectedId = p.id || ''
+        } catch {}
+    } else if (m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.body?.text) {
+        selectedId = m.message.viewOnceMessage.message.interactiveResponseMessage.body.text
+    } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.body?.text) {
+        selectedId = m.message.viewOnceMessageV2.message.interactiveResponseMessage.body.text
+    } else if (m.message?.viewOnceMessage?.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
+        selectedId = m.message.viewOnceMessage.message.listResponseMessage.singleSelectReply.selectedRowId
+    } else if (m.message?.viewOnceMessageV2?.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
+        selectedId = m.message.viewOnceMessageV2.message.listResponseMessage.singleSelectReply.selectedRowId
+    }
+    if (!selectedId) return null
+    selectedId = String(selectedId).trim()
+    if (!selectedId) return null
+    console.log('[اوامر] ضغطة:', selectedId)
+
+    if (/^\.?ق\s*\d+$/.test(selectedId)) {
+        let cmd = selectedId.replace(/\s+/g, '')
+        if (!cmd.startsWith('.')) cmd = '.' + cmd
+        return cmd
+    }
+    if (/^\.?قسم\s+/i.test(selectedId)) {
+        return selectedId.startsWith('.') ? selectedId : '.' + selectedId
+    }
+    if (!selectedId.startsWith('.') && selectedId.length < 40 && !selectedId.includes('http')) {
+        let qSections = getQSections()
+        let qMatch = qSections.find(s =>
+            normalize(s.title) === normalize(selectedId) ||
+            normalize(s.title).includes(normalize(selectedId)) ||
+            normalize(selectedId).includes(normalize(s.title))
+        )
+        if (qMatch) return `.${qMatch.key}`
+        return `.قسم ${selectedId}`
+    }
+    return null
 }
 
 async function showTagSection(conn, m, catName, usedPrefix) {
@@ -166,35 +191,35 @@ async function showTagSection(conn, m, catName, usedPrefix) {
         m.text = `.${qMatch.key}`
         m.body = `.${qMatch.key}`
         if (m.msg) m.msg.text = `.${qMatch.key}`
-        return { isQ: true, key: qMatch.key }
+        return { isQ: true }
     }
-
     let { tagGrouped } = await getAllSections()
     let found = Object.keys(tagGrouped).find(c => normalize(c) === normalize(catName))
     if (!found) found = Object.keys(tagGrouped).find(c => normalize(c).includes(normalize(catName)) || normalize(catName).includes(normalize(c)))
     if (!found) {
-        return conn.sendMessage(m.chat, { text: `❌ ما لقيت قسم ${catName}\nاكتب .اوامر وشوف الأقسام المتوفرة` }, { quoted: m })
+        return conn.sendMessage(m.chat, { text: `❌ ما لقيت قسم ${catName}\nاكتب .اوامر وشوف الأقسام` }, { quoted: m })
     }
     let cmds = tagGrouped[found]
-    // ✅ نفس الزخرفة القديمة بس عمودين بس - فوق وتحت
     let text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n`
     text += `  ${getIcon(found)} قسم: ${found}\n`
     text += `  📦 عدد الأوامر: ${cmds.length}\n\n`
     for (let c of cmds) text += `  • ${usedPrefix || '.'}${c}\n`
-    text += `\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n`
-    text += `  اكتب ${usedPrefix || '.'}اوامر للرجوع\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
+    text += `\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n  اكتب ${usedPrefix || '.'}اوامر للرجوع\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
     await conn.sendMessage(m.chat, { text }, { quoted: m })
     return { isQ: false }
 }
 
+// ✅ جلب الصورة - من menu-url.txt اذا موجود، ولا من الرابط حقك
 async function getImageMedia(conn) {
     try {
         let imageUrl = MENU_IMAGE
         let urlFile = path.join(__dirname, 'menu-url.txt')
         if (fs.existsSync(urlFile)) {
             let saved = fs.readFileSync(urlFile, 'utf-8').trim()
-            if (saved.startsWith('https://')) imageUrl = saved
+            if (saved.startsWith('https://') && !saved.includes('xxxxxx')) imageUrl = saved
         }
+        // اذا الرابط وهمي، نرجع null وما نخرب القائمة
+        if (!imageUrl || imageUrl.includes('xxxxxx')) return null
         const res = await fetch(imageUrl, { signal: AbortSignal.timeout(7000) })
         if (!res.ok) return null
         const buf = Buffer.from(await res.arrayBuffer())
@@ -204,27 +229,24 @@ async function getImageMedia(conn) {
 }
 
 async function showMenu(conn, m) {
-    try { await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } }) } catch {}
     let user = m.pushName || 'مستخدم'
-    try { if (typeof conn.getName === 'function') user = (await conn.getName(m.sender)) || user } catch {}
-
     let { all, qSections, tagSections } = await getAllSections()
     if (!all.length) {
-        return conn.sendMessage(m.chat, { text: `❌ ما لقيت أي أقسام!\nتأكد ان عندك ملفات ق1 و ق2 أو ملفات فيها tags` }, { quoted: m })
+        return conn.sendMessage(m.chat, { text: '❌ ما لقيت أي أقسام!' }, { quoted: m })
     }
 
     let rows = all.slice(0, 10).map(s => ({
         header: s.icon,
         title: String(s.title).slice(0, 24),
-        description: String(s.desc).slice(0, 72),
-        id: s.id
+        description: String(s.type === 'q' ? s.desc : `${s.cmds.length} أمر`).slice(0, 72),
+        id: s.type === 'q' ? `.${s.key}` : `.قسم ${s.title}`
     }))
 
-    const media = await getImageMedia(conn)
     const totalCmds = Object.values(await getTagSections()).flat().length
-    // ✅ نفس الزخرفة القديمة بس عمودين بس - فوق وتحت، مو 4
     const text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n  ⚡ أهلاً بك يا ${user}\n\n  ✦ الفخامة لها عنوان واحد\n  ✦ القوة .. السرعة .. الهيبة\n  ✦ اختر .. واستمتع\n  ✦ ${qSections.length} قسم ثابت | ${tagSections.length} قسم تلقائي | ${totalCmds} أمر\n\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
 
+    // ✅ الصورة + القائمة مع بعض في نفس الرسالة
+    const media = await getImageMedia(conn)
     const header = media?.imageMessage
         ? { title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓', hasMediaAttachment: true, imageMessage: media.imageMessage }
         : { title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓', hasMediaAttachment: false }
@@ -267,81 +289,27 @@ let handler = async (m, { conn, usedPrefix }) => {
         return showMenu(conn, m)
     } catch (e) {
         console.error('MENU ERROR:', e)
-        await m.reply('❌ حصل خطأ أثناء فتح القائمة.')
+        await conn.sendMessage(m.chat, { text: `❌ حصل خطأ: ${e.message}` }, { quoted: m })
     }
 }
 
+// ✅ الضغطة في مكانين معاً عشان تشتغل 100%
 handler.before = async (m, { conn }) => {
-    try {
-        let selectedId = ''
-        if (m.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
-            selectedId = m.message.listResponseMessage.singleSelectReply.selectedRowId
-        } else if (m.message?.interactiveResponseMessage?.body?.text) {
-            selectedId = m.message.interactiveResponseMessage.body.text
-        } else if (m.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
-            try {
-                let params = JSON.parse(m.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
-                selectedId = params.id || params.selectedRowId || ''
-                if (!selectedId && params.paramsJson) {
-                    let inner = JSON.parse(params.paramsJson)
-                    selectedId = inner.id || ''
-                }
-            } catch {}
-        } else if (m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.body?.text) {
-            selectedId = m.message.viewOnceMessage.message.interactiveResponseMessage.body.text
-        } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.body?.text) {
-            selectedId = m.message.viewOnceMessageV2.message.interactiveResponseMessage.body.text
-        } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
-            try {
-                let params = JSON.parse(m.message.viewOnceMessageV2.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
-                selectedId = params.id || ''
-            } catch {}
-        }
-
-        if (!selectedId) return
-        selectedId = String(selectedId).trim()
-        if (!selectedId) return
-
-        if (/^\.?ق\s*\d+$/.test(selectedId)) {
-            let cmd = selectedId.replace(/\s+/g, '')
-            if (!cmd.startsWith('.')) cmd = '.' + cmd
+    let cmd = convertClick(m)
+    if (cmd) {
+        m.text = cmd
+        m.body = cmd
+        if (m.msg) m.msg.text = cmd
+    }
+}
+handler.all = async (m, { conn }) => {
+    if (!m.text && !m.body) {
+        let cmd = convertClick(m)
+        if (cmd) {
             m.text = cmd
             m.body = cmd
             if (m.msg) m.msg.text = cmd
-            return
         }
-
-        if (/^\.?قسم\s+/i.test(selectedId)) {
-            let cmd = selectedId.startsWith('.') ? selectedId : '.' + selectedId
-            m.text = cmd
-            m.body = cmd
-            if (m.msg) m.msg.text = cmd
-            return
-        }
-
-        if (m.message?.interactiveResponseMessage || m.message?.listResponseMessage || m.message?.viewOnceMessage || m.message?.viewOnceMessageV2) {
-            if (!selectedId.startsWith('.') && selectedId.length < 40 && !selectedId.includes('http')) {
-                let qSections = getQSections()
-                let qMatch = qSections.find(s =>
-                    normalize(s.title) === normalize(selectedId) ||
-                    normalize(s.title).includes(normalize(selectedId)) ||
-                    normalize(selectedId).includes(normalize(s.title))
-                )
-                if (qMatch) {
-                    let cmd = `.${qMatch.key}`
-                    m.text = cmd
-                    m.body = cmd
-                    if (m.msg) m.msg.text = cmd
-                    return
-                }
-                m.text = `.قسم ${selectedId}`
-                m.body = `.قسم ${selectedId}`
-                if (m.msg) m.msg.text = `.قسم ${selectedId}`
-                return
-            }
-        }
-    } catch (e) {
-        console.log('[اوامر] before error:', e.message)
     }
 }
 
