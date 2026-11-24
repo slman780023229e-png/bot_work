@@ -29,17 +29,22 @@ const normalize = (value = '') => String(value)
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
-// ✧ تثبيت: أوامر لها أكثر من كتابة لكنها نفس الأمر ✧
-// المفتاح = الكتابة البديلة، القيمة = الاسم الأساسي اللي بيظهر في القائمة
+// ✧ كل الأشكال لنفس الأمر ترجع لاسم واحد أساسي ✧
 const COMMAND_ALIASES = {
     'بينتر': 'بنترست',
     'بنتر': 'بنترست',
     'بينترست': 'بنترست',
     'بينتريست': 'بنترست',
     'بنتريست': 'بنترست',
+    'بنتيرست': 'بنترست',
+    'بينتيرست': 'بنترست',
+    'بنتير': 'بنترست',
+    'بينتير': 'بنترست',
     'pinterest': 'بنترست',
     'pintrest': 'بنترست',
     'pin': 'بنترست',
+    'pint': 'بنترست',
+    'pins': 'بنترست',
     'تيكتوك': 'تيك توك',
     'تيك': 'تيك توك',
     'tiktok': 'تيك توك',
@@ -53,40 +58,41 @@ const COMMAND_ALIASES = {
     'واتس': 'واتساب',
     'whatsapp': 'واتساب',
     'جوجل': 'جوجل',
-    'google': 'جوجل',
-    'شات': 'شات',
-    'chat': 'شات',
-    'صوره': 'صورة',
-    'صورة': 'صورة',
-    'اغنيه': 'اغنية',
-    'اغنية': 'اغنية'
+    'google': 'جوجل'
 }
 
-// ✧ مفتاح قانوني للمقارنة: يحول كل أشكال نفس الأمر لنفس المفتاح ✧
 const getCanonicalKey = (value = '') => {
     let key = normalize(value)
-    // إذا كان له اسم أساسي معروف، استخدمه مباشرة
     if (COMMAND_ALIASES[key]) return COMMAND_ALIASES[key]
-    // تطبيع التشابه العربي: ا / أ / إ / آ كلها واحد، ة = ه، ي الزائدة تنشال للمقارنة فقط
     key = key
         .replace(/[أإآ]/g, 'ا')
         .replace(/ة/g, 'ه')
-        .replace(/[\u064B-\u0652]/g, '') // تشكيل
+        .replace(/[\u064B-\u0652]/g, '')
         .replace(/\s+/g, '')
-        .replace(/ا/g, '') // ا تروح للمقارنة: بنترست = بنترست، بينتر = بنتر
-        .replace(/ي/g, '') // ي تروح للمقارنة: بينتر = بنتر
+        .replace(/ا/g, '')
+        .replace(/ي/g, '')
         .replace(/ه$/g, '')
     return key
 }
 
-// هل الأمرين نفس الأمر حتى لو كتابتهم مختلفة شوي؟
-// مثال: بنترست و بينتر - واحد بادئ بالثاني والفرق حرفين أو أقل
+// أي أمر يشبه بنترست يرجع بنترست إجباري
+const getCanonicalCommand = (value = '') => {
+    const n = normalize(value)
+    if (COMMAND_ALIASES[n]) return COMMAND_ALIASES[n]
+    const k = getCanonicalKey(value)
+    if (k.startsWith('بنتر') || k.startsWith('bntr') || k.includes('pinter') || k === 'pint' || k === 'pin') return 'بنترست'
+    for (const [alias, canon] of Object.entries(COMMAND_ALIASES)) {
+        if (getCanonicalKey(alias) === k) return canon
+    }
+    return String(value).trim()
+}
+
 const isSameCommand = (a, b) => {
     const ka = getCanonicalKey(a)
     const kb = getCanonicalKey(b)
     if (ka === kb) return true
+    if (getCanonicalCommand(a) === getCanonicalCommand(b)) return true
     if (!ka || !kb) return false
-    // واحد يحتوي الثاني والفرق صغير = نفس الأمر
     if (ka.length >= 3 && kb.length >= 3) {
         if (ka.startsWith(kb) && (ka.length - kb.length) <= 3) return true
         if (kb.startsWith(ka) && (kb.length - ka.length) <= 3) return true
@@ -236,6 +242,7 @@ const commandsFromPattern = (pattern) => {
         )
 }
 
+// ✧ القاعدة الجديدة المضمونة: كل ملف يطلع منه أمر واحد بس ✧
 const getPluginCommands = (plugin, fileName) => {
     let candidates = []
 
@@ -252,34 +259,46 @@ const getPluginCommands = (plugin, fileName) => {
         candidates.push(...commandsFromPattern(raw))
     }
 
-    // بعض الإضافات تعتمد customPrefix بدل command.
-    if (!candidates.length && plugin?.customPrefix instanceof RegExp) {
+    if (plugin?.customPrefix instanceof RegExp) {
         candidates.push(...commandsFromPattern(plugin.customPrefix))
     }
 
-    const output = []
-    const seen = []
-
+    // نظف كل المرشحين وحولهم للاسم الأساسي
+    const cleaned = []
     for (const item of candidates) {
-        let command = cleanCommand(item)
+        const command = getCanonicalCommand(cleanCommand(item))
         if (!command || command.length > 45) continue
         if (/^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
-        // ✧ تثبيت: وحد اسم الأمر للاسم الأساسي إذا له بديل معروف
-        const aliased = COMMAND_ALIASES[normalize(command)]
-        if (aliased) command = aliased
-        // ✧ تثبيت: لا تكرر نفس الأمر بكتابة مختلفة داخل نفس الملف
-        if (seen.some(prev => isSameCommand(prev, command))) continue
-        seen.push(command)
-        output.push(command)
+        if (!cleaned.includes(command)) cleaned.push(command)
     }
 
-    // لا نعرض اسم الملف كأمر إلا إذا كان الملف يصدّر معالجًا صالحًا.
-    if (!output.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
-        const fallback = cleanCommand(path.basename(fileName, '.js'))
-        if (fallback && !/^ق\s*\d+$/i.test(fallback)) output.push(fallback)
+    // إذا ما فيه ولا مرشح، استخدم اسم الملف
+    if (!cleaned.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
+        const fallback = getCanonicalCommand(cleanCommand(path.basename(fileName, '.js')))
+        if (fallback && !/^ق\s*\d+$/i.test(fallback)) cleaned.push(fallback)
     }
 
-    return output
+    if (!cleaned.length) return []
+
+    // ✧ هنا التثبيت: لو الملف فيه أكثر من طريقة لنفس الأمر، نختار واحد بس
+    // ندمج المتشابهين أولاً
+    const unique = []
+    for (const cmd of cleaned) {
+        if (!unique.some(prev => isSameCommand(prev, cmd))) unique.push(cmd)
+    }
+
+    // لو بعد الدمج لسى فيه أكثر من أمر مختلف، نختار الأفضل واحد فقط:
+    // 1- إذا واحد منهم هو الاسم الأساسي في COMMAND_ALIASES خذه
+    // 2- وإلا خذ الأطول (الأوضح) لأنه غالباً هو الاسم الكامل مثل بنترست مو بينتر
+    // 3- وإلا خذ الأول
+    if (unique.length === 1) return unique
+
+    const canonicalValues = new Set(Object.values(COMMAND_ALIASES))
+    const preferred = unique.find(c => canonicalValues.has(c))
+    if (preferred) return [preferred]
+
+    const longest = [...unique].sort((a, b) => b.length - a.length)[0]
+    return [longest]
 }
 
 const getMenuData = async (force = false) => {
@@ -288,6 +307,7 @@ const getMenuData = async (force = false) => {
 
     const files = scanPluginFiles(__dirname)
     const categories = new Map()
+    const globalSeen = []
 
     for (const fullPath of files) {
         try {
@@ -296,7 +316,6 @@ const getMenuData = async (force = false) => {
             const imported = await import(moduleUrl)
             const plugin = imported?.default
 
-            // ملفات الأحداث التي لا تصدّر أمرًا لا تدخل في القائمة.
             if (!plugin || !['object', 'function'].includes(typeof plugin)) continue
             if (!plugin.command && !plugin.customPrefix) continue
 
@@ -307,14 +326,12 @@ const getMenuData = async (force = false) => {
             if (!categories.has(category)) categories.set(category, new Map())
             const bucket = categories.get(category)
 
-            for (const command of commands) {
-                // ✧ تثبيت: دمج التكرارات عبر كل الملفات - بنترست / بينتر = أمر واحد
-                let existingKey = null
-                for (const k of bucket.keys()) {
-                    if (isSameCommand(k, command)) { existingKey = k; break }
-                }
-                if (existingKey) continue
-                const key = normalize(command)
+            for (const rawCommand of commands) {
+                const command = getCanonicalCommand(rawCommand)
+                if (globalSeen.some(prev => isSameCommand(prev, command))) continue
+                globalSeen.push(command)
+
+                const key = getCanonicalKey(command)
                 if (!bucket.has(key)) {
                     bucket.set(key, {
                         command,
@@ -491,7 +508,6 @@ const handler = async (m, { conn, usedPrefix }) => {
             id: `.قسم ${category.name}`
         }))
 
-        // واتساب يسمح بحد أقصى 10 صفوف في كل مجموعة.
         const sections = []
         for (let i = 0; i < rows.length; i += 10) {
             sections.push({
