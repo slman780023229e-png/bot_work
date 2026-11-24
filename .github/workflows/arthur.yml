@@ -16,175 +16,66 @@ concurrency:
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 270
+    timeout-minutes: 235
 
     steps:
-      - name: Checkout ARTHUR BOT
+      - name: سحب ملفات البوت من المستودع
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Setup Node.js
+      - name: تجهيز بيئة Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
 
-      - name: Install Dependencies
+      - name: تثبيت المكتبات
         run: npm install
 
-      - name: Trim Session Keys in Upstash Redis to Max 150 Across All Types
-        env:
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      - name: استرجاع ملف الاتصال من المخزن المخفي (Cache)
+        id: restore-session-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ملف_الاتصال
+            ArthurSession
+            ArthurSubBot
+            BackupSession
+            session
+            sessions
+            auth_info_baileys
+          key: arthur-session-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            arthur-session-v1-${{ github.ref_name }}-
+            arthur-session-v1-
+
+      - name: التحقق من استرجاع ملف الاتصال
+        shell: bash
         run: |
-          node -e '
-            const url = process.env.UPSTASH_REDIS_REST_URL;
-            const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-            const MAX_KEEP = 150;
-            const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
-            const now = Date.now();
+          if [ -d "ملف_الاتصال" ] && [ -n "$(ls -A "ملف_الاتصال" 2>/dev/null)" ]; then
+            echo "✅ تم استرجاع ملف الاتصال من المخزن المخفي بنجاح."
+          else
+            echo "ℹ️ لا يوجد ملف اتصال محفوظ مسبقاً، سيتم إنشاؤه وحفظه بعد الربط."
+          fi
 
-            async function redis(cmd) {
-              const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify(cmd)
-              });
-              return res.json();
-            }
-
-            function detectType(key) {
-              const k = String(key).toLowerCase();
-              if (k.includes("creds")) return "creds";
-              if (k.startsWith("session") || k.includes("session-")) return "session";
-              if (k.includes("pre-key") || k.includes("prekey")) return "pre-key";
-              if (k.includes("sender-key") || k.includes("senderkey")) return "sender-key";
-              if (k.includes("app-state") || k.includes("appstate")) return "app-state";
-              const parts = k.split(/[-_:]/);
-              return parts.slice(0, 2).join("-") || "other";
-            }
-
-            (async () => {
-              if (!url || !token) {
-                console.log("Upstash credentials missing; skipping Redis trim.");
-                return;
-              }
-
-              try {
-                const keysRes = await redis(["KEYS", "*"]);
-                const allKeys = Array.isArray(keysRes.result) ? keysRes.result : [];
-                if (allKeys.length <= MAX_KEEP) {
-                  console.log(`Total keys (${allKeys.length}) within limit (${MAX_KEEP}).`);
-                  return;
-                }
-
-                const tsMapRes = await redis(["HGETALL", "arthur_session_ts"]);
-                const tsList = Array.isArray(tsMapRes.result) ? tsMapRes.result : [];
-                const tsMap = new Map();
-                for (let i = 0; i < tsList.length; i += 2) {
-                  tsMap.set(tsList[i], Number(tsList[i + 1] || 0));
-                }
-
-                const groups = new Map();
-                for (const key of allKeys) {
-                  const type = detectType(key);
-                  if (!groups.has(type)) groups.set(type, []);
-                  const ts = tsMap.get(key) || 0;
-                  const isOld = ts > 0 && (now - ts) >= FOUR_HOURS_MS;
-                  groups.get(type).push({ key, ts, isOld });
-                }
-
-                for (const [, list] of groups.entries()) {
-                  list.sort((a, b) => {
-                    if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
-                    return b.ts - a.ts;
-                  });
-                }
-
-                const keepSet = new Set();
-                let remainingBudget = MAX_KEEP;
-
-                for (const priorityType of ["creds", "session"]) {
-                  const list = groups.get(priorityType) || [];
-                  const take = Math.min(list.length, remainingBudget, priorityType === "creds" ? 10 : 40);
-                  for (let i = 0; i < take; i++) {
-                    keepSet.add(list[i].key);
-                    remainingBudget--;
-                  }
-                }
-
-                const typeNames = Array.from(groups.keys());
-                const perTypeMinimum = Math.max(1, Math.floor(remainingBudget / Math.max(1, typeNames.length)));
-
-                for (const type of typeNames) {
-                  if (remainingBudget <= 0) break;
-                  const list = groups.get(type) || [];
-                  let takenForType = 0;
-                  for (const item of list) {
-                    if (takenForType >= perTypeMinimum || remainingBudget <= 0) break;
-                    if (!keepSet.has(item.key)) {
-                      keepSet.add(item.key);
-                      takenForType++;
-                      remainingBudget--;
-                    }
-                  }
-                }
-
-                if (remainingBudget > 0) {
-                  const leftovers = [];
-                  for (const [, list] of groups.entries()) {
-                    for (const item of list) {
-                      if (!keepSet.has(item.key)) leftovers.push(item);
-                    }
-                  }
-                  leftovers.sort((a, b) => {
-                    if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
-                    return b.ts - a.ts;
-                  });
-                  for (const item of leftovers) {
-                    if (remainingBudget <= 0) break;
-                    keepSet.add(item.key);
-                    remainingBudget--;
-                  }
-                }
-
-                const toDelete = allKeys.filter(k => !keepSet.has(k));
-                if (toDelete.length > 0) {
-                  for (let i = 0; i < toDelete.length; i += 100) {
-                    const batch = toDelete.slice(i, i + 100);
-                    await redis(["DEL", ...batch]);
-                    await redis(["HDEL", "arthur_session_ts", ...batch]);
-                  }
-                }
-
-                console.log(`Kept ${keepSet.size} keys across ${typeNames.length} types; deleted ${toDelete.length} keys.`);
-              } catch (err) {
-                console.log("Redis trim skipped:", err.message);
-              }
-            })();
-          '
-
-      - name: Run ARTHUR BOT
+      - name: تشغيل البوت ورفع التعديلات إلى المستودع
+        shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
-          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
-          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        shell: bash
         run: |
           set +e
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          BRANCH_MAIN="${GITHUB_REF_NAME:-main}"
+
+          # حماية المستودع من رفع ملفات الجلسات أو البيانات الحساسة
           touch .gitignore
-          # إزالة database/ من .gitignore إذا كان مضافاً سابقاً حتى لا يمنع التقاط مجلدات أو ملفات جديدة داخله
           sed -i '/^database\/\?$/d' .gitignore 2>/dev/null || true
 
           add_ignore() {
@@ -201,7 +92,6 @@ jobs:
           add_ignore "BackupSession/"
           add_ignore "session/"
           add_ignore "sessions/"
-          add_ignore "/ملف_الاتصال"
           add_ignore "ملف_الاتصال/"
           add_ignore "auth_info_baileys/"
           add_ignore "**/creds.json"
@@ -212,31 +102,25 @@ jobs:
           add_ignore "*.p12"
           add_ignore "*.pfx"
           add_ignore "*.log"
-          add_ignore "temp/"
-          add_ignore "tmp/"
+          add_ignore "**/temp/"
+          add_ignore "**/*.tmp"
 
-          get_branch() {
-            if [ -n "${GITHUB_REF_NAME:-}" ]; then
-              echo "$GITHUB_REF_NAME"
-            else
-              git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main"
-            fi
-          }
-
-          save_changes() {
-            echo "Checking ARTHUR repository changes..."
-            BRANCH_NAME="$(get_branch)"
-
+          clean_session_temp() {
             if [ -d "ملف_الاتصال" ]; then
-              TOTAL_FILES=$(find "ملف_الاتصال" -maxdepth 1 -type f | wc -l)
+              TOTAL_FILES=$(find "ملف_الاتصال" -maxdepth 1 -type f 2>/dev/null | wc -l)
               if [ "$TOTAL_FILES" -gt 150 ]; then
-                find "ملف_الاتصال" -maxdepth 1 -type f ! -name "creds.json" ! -name "session-*" -printf "%T@ %p\n" \
+                find "ملف_الاتصال" -maxdepth 1 -type f ! -name "creds.json" ! -name "session-*" -printf "%T@ %p\n" 2>/dev/null \
                   | sort -n \
                   | head -n $((TOTAL_FILES - 150)) \
                   | cut -d' ' -f2- \
                   | xargs -r rm -f 2>/dev/null || true
               fi
             fi
+          }
+
+          save_changes() {
+            echo "🔍 جاري فحص التعديلات الجديدة لرفعها إلى المستودع..."
+            clean_session_temp
 
             git rm -r --cached --ignore-unmatch -- \
               node_modules \
@@ -248,100 +132,124 @@ jobs:
               "ملف_الاتصال" \
               auth_info_baileys 2>/dev/null || true
 
-            git rm --cached --ignore-unmatch .env .env.* "**/creds.json" "**/*.pem" "**/*.key" 2>/dev/null || true
+            git add -A 2>/dev/null || true
+            git reset -q -- \
+              node_modules \
+              "**/node_modules/**" \
+              .env \
+              ".env.*" \
+              "ArthurSession/**" \
+              "ArthurSubBot/**" \
+              "BackupSession/**" \
+              "session/**" \
+              "sessions/**" \
+              "ملف_الاتصال/**" \
+              "auth_info_baileys/**" \
+              "**/creds.json" \
+              "*.db" \
+              "*.db.*" \
+              "*.pem" \
+              "*.key" \
+              "*.p12" \
+              "*.pfx" \
+              "*.log" \
+              "**/temp/**" \
+              "**/*.tmp" 2>/dev/null || true
 
-            git add -A -- . \
-              ':(exclude).gitignore' \
-              ':(exclude)**/node_modules/**' \
-              ':(exclude)**/ArthurSession/**' \
-              ':(exclude)**/ArthurSubBot/**' \
-              ':(exclude)**/BackupSession/**' \
-              ':(exclude)**/session/**' \
-              ':(exclude)**/sessions/**' \
-              ':(exclude)ملف_الاتصال/**' \
-              ':(exclude)**/ملف_الاتصال/**' \
-              ':(exclude)**/auth_info_baileys/**' \
-              ':(exclude)**/creds.json' \
-              ':(exclude)**/*.db' \
-              ':(exclude)**/*.db.*' \
-              ':(exclude)**/*.pem' \
-              ':(exclude)**/*.key' \
-              ':(exclude)**/*.p12' \
-              ':(exclude)**/*.pfx' \
-              ':(exclude)**/*.log' \
-              ':(exclude)**/temp/**' \
-              ':(exclude)**/tmp/**' || {
-              echo "git add encountered an error."
-              return 1
-            }
-
-            git add .gitignore || return 1
+            git add .gitignore 2>/dev/null || true
 
             if git diff --cached --quiet; then
-              echo "No changes to save."
+              echo "ℹ️ لا توجد تعديلات جديدة لرفعها."
               return 0
             fi
 
-            git commit -m "Auto-save ARTHUR BOT progress" || return 1
+            git commit -m "حفظ تلقائي لتعديلات ARTHUR BOT" -q || {
+              echo "❌ خطأ: فشل إنشاء نقطة الحفظ (Commit)."
+              return 1
+            }
 
-            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
+            git fetch origin "+refs/heads/${BRANCH_MAIN}:refs/remotes/origin/${BRANCH_MAIN}" -q || {
+              echo "❌ خطأ: فشل الاتصال بالمستودع لجلب آخر التحديثات."
+              return 1
+            }
 
-            if [ "$(git rev-list --count "origin/${BRANCH_NAME}..HEAD")" -gt 0 ]; then
-              if ! git push origin "HEAD:${BRANCH_NAME}"; then
-                echo "Push failed. Trying to synchronize..."
+            if [ "$(git rev-list --count "origin/${BRANCH_MAIN}..HEAD")" -gt 0 ]; then
+              if ! git push origin "HEAD:${BRANCH_MAIN}" -q 2>/dev/null; then
+                echo "⚠️ تعذر الرفع المباشر، جاري محاولة المزامنة والدمج التلقائي..."
 
-                git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
+                git fetch origin "+refs/heads/${BRANCH_MAIN}:refs/remotes/origin/${BRANCH_MAIN}" -q || return 1
 
-                git -c rebase.autostash=true rebase "origin/${BRANCH_NAME}" || {
-                  git rebase --abort || true
-                  echo "Rebase conflict. Save failed."
+                git -c rebase.autostash=true rebase "origin/${BRANCH_MAIN}" -q || {
+                  git rebase --abort 2>/dev/null || true
+                  echo "❌ خطأ: يوجد تعارض في الملفات (Rebase Conflict)، تعذر رفع التعديلات."
                   return 1
                 }
 
-                git push origin "HEAD:${BRANCH_NAME}" || {
-                  echo "Push failed after rebase. Check branch permissions or token."
+                git push origin "HEAD:${BRANCH_MAIN}" -q || {
+                  echo "❌ خطأ: فشل الرفع للمستودع بعد المزامنة. تأكد من صلاحيات الكتابة للمستودع."
                   return 1
                 }
               fi
-              echo "ARTHUR changes saved successfully."
-            else
-              echo "No new commits to push."
+              echo "✅ تم رفع وحفظ جميع تعديلات البوت إلى المستودع بنجاح!"
             fi
           }
 
           cleanup_and_exit() {
-            echo "Stopping ARTHUR BOT..."
+            echo "🛑 جاري إيقاف البوت وحفظ التعديلات قبل الإغلاق..."
             if [ -n "${BOT_PID:-}" ]; then
               kill -TERM "$BOT_PID" 2>/dev/null || true
               wait "$BOT_PID" 2>/dev/null || true
             fi
-            save_changes || echo "Final save failed."
+            save_changes || echo "⚠️ حدث خطأ أثناء الحفظ النهائي."
             exit "${1:-0}"
           }
 
           trap 'cleanup_and_exit 0' SIGTERM SIGINT
 
-          echo "ARTHUR BOT supervisor started. Auto-save interval: 5 minutes."
+          echo "========================================="
+          echo "      تم بدء تشغيل ARTHUR BOT بنجاح      "
+          echo "========================================="
 
           while true; do
             node start.js &
             BOT_PID=$!
-            echo "ARTHUR BOT started (PID: $BOT_PID)."
+
+            echo "🚀 البوت يعمل الآن (رقم العملية: $BOT_PID)"
             LAST_SAVE=$(date +%s)
+
             while kill -0 "$BOT_PID" 2>/dev/null; do
               sleep 5
               NOW=$(date +%s)
+
               if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
                 if kill -0 "$BOT_PID" 2>/dev/null; then
-                  save_changes || echo "Auto-save failed; retrying later."
+                  save_changes || echo "⚠️ فشلت محاولة الحفظ الدوري، ستتم إعادة المحاولة بعد 5 دقائق."
                 fi
                 LAST_SAVE=$(date +%s)
               fi
             done
+
             wait "$BOT_PID"
             BOT_STATUS=$?
             BOT_PID=""
-            echo "Runner exited with status: $BOT_STATUS"
-            save_changes || echo "Save after exit failed."
-            sleep 2
+
+            echo "⚠️ توقف البوت عن العمل (رمز الخروج: $BOT_STATUS)."
+            save_changes || echo "⚠️ فشل الحفظ بعد توقف البوت."
+
+            echo "🔄 إعادة تشغيل البوت تلقائياً خلال 5 ثوانٍ..."
+            sleep 5
           done
+
+      - name: حفظ ملف الاتصال في المخزن المخفي عند الإغلاق
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ملف_الاتصال
+            ArthurSession
+            ArthurSubBot
+            BackupSession
+            session
+            sessions
+            auth_info_baileys
+          key: arthur-session-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
