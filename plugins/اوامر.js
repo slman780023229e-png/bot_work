@@ -29,6 +29,71 @@ const normalize = (value = '') => String(value)
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
+// ✧ تثبيت: أوامر لها أكثر من كتابة لكنها نفس الأمر ✧
+// المفتاح = الكتابة البديلة، القيمة = الاسم الأساسي اللي بيظهر في القائمة
+const COMMAND_ALIASES = {
+    'بينتر': 'بنترست',
+    'بنتر': 'بنترست',
+    'بينترست': 'بنترست',
+    'بينتريست': 'بنترست',
+    'بنتريست': 'بنترست',
+    'pinterest': 'بنترست',
+    'pintrest': 'بنترست',
+    'pin': 'بنترست',
+    'تيكتوك': 'تيك توك',
+    'تيك': 'تيك توك',
+    'tiktok': 'تيك توك',
+    'انستا': 'انستقرام',
+    'انستغرام': 'انستقرام',
+    'instagram': 'انستقرام',
+    'فيس': 'فيسبوك',
+    'facebook': 'فيسبوك',
+    'يوتيوب': 'يوتيوب',
+    'youtube': 'يوتيوب',
+    'واتس': 'واتساب',
+    'whatsapp': 'واتساب',
+    'جوجل': 'جوجل',
+    'google': 'جوجل',
+    'شات': 'شات',
+    'chat': 'شات',
+    'صوره': 'صورة',
+    'صورة': 'صورة',
+    'اغنيه': 'اغنية',
+    'اغنية': 'اغنية'
+}
+
+// ✧ مفتاح قانوني للمقارنة: يحول كل أشكال نفس الأمر لنفس المفتاح ✧
+const getCanonicalKey = (value = '') => {
+    let key = normalize(value)
+    // إذا كان له اسم أساسي معروف، استخدمه مباشرة
+    if (COMMAND_ALIASES[key]) return COMMAND_ALIASES[key]
+    // تطبيع التشابه العربي: ا / أ / إ / آ كلها واحد، ة = ه، ي الزائدة تنشال للمقارنة فقط
+    key = key
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/[\u064B-\u0652]/g, '') // تشكيل
+        .replace(/\s+/g, '')
+        .replace(/ا/g, '') // ا تروح للمقارنة: بنترست = بنترست، بينتر = بنتر
+        .replace(/ي/g, '') // ي تروح للمقارنة: بينتر = بنتر
+        .replace(/ه$/g, '')
+    return key
+}
+
+// هل الأمرين نفس الأمر حتى لو كتابتهم مختلفة شوي؟
+// مثال: بنترست و بينتر - واحد بادئ بالثاني والفرق حرفين أو أقل
+const isSameCommand = (a, b) => {
+    const ka = getCanonicalKey(a)
+    const kb = getCanonicalKey(b)
+    if (ka === kb) return true
+    if (!ka || !kb) return false
+    // واحد يحتوي الثاني والفرق صغير = نفس الأمر
+    if (ka.length >= 3 && kb.length >= 3) {
+        if (ka.startsWith(kb) && (ka.length - kb.length) <= 3) return true
+        if (kb.startsWith(ka) && (kb.length - ka.length) <= 3) return true
+    }
+    return false
+}
+
 const CATEGORY_ALIASES = {
     group: 'إدارة المجموعات',
     groups: 'إدارة المجموعات',
@@ -193,15 +258,18 @@ const getPluginCommands = (plugin, fileName) => {
     }
 
     const output = []
-    const seen = new Set()
+    const seen = []
 
     for (const item of candidates) {
-        const command = cleanCommand(item)
+        let command = cleanCommand(item)
         if (!command || command.length > 45) continue
         if (/^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
-        const key = normalize(command)
-        if (seen.has(key)) continue
-        seen.add(key)
+        // ✧ تثبيت: وحد اسم الأمر للاسم الأساسي إذا له بديل معروف
+        const aliased = COMMAND_ALIASES[normalize(command)]
+        if (aliased) command = aliased
+        // ✧ تثبيت: لا تكرر نفس الأمر بكتابة مختلفة داخل نفس الملف
+        if (seen.some(prev => isSameCommand(prev, command))) continue
+        seen.push(command)
         output.push(command)
     }
 
@@ -240,6 +308,12 @@ const getMenuData = async (force = false) => {
             const bucket = categories.get(category)
 
             for (const command of commands) {
+                // ✧ تثبيت: دمج التكرارات عبر كل الملفات - بنترست / بينتر = أمر واحد
+                let existingKey = null
+                for (const k of bucket.keys()) {
+                    if (isSameCommand(k, command)) { existingKey = k; break }
+                }
+                if (existingKey) continue
                 const key = normalize(command)
                 if (!bucket.has(key)) {
                     bucket.set(key, {
