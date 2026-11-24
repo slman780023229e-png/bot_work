@@ -1,5 +1,5 @@
 
-name: ARTHUR BOT Runner - Protected Session
+name: ARTHUR BOT - تشغيل وحماية الجلسة
 
 on:
   workflow_dispatch:
@@ -17,434 +17,310 @@ concurrency:
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
-    timeout-minutes: 235
+    timeout-minutes: 270
 
     steps:
 
       # ==========================================
-      # 1. DOWNLOAD PROJECT
+      # 1. سحب ملفات المشروع
       # ==========================================
       - name: سحب ملفات ARTHUR BOT
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
 
       # ==========================================
-      # 2. RESTORE OLD CACHE - MIGRATION
+      # 2. استعادة جلسة واتساب
       # ==========================================
-      - name: استرجاع الجلسة القديمة للترحيل الآمن
-        id: restore-old-cache
+      - name: استعادة جلسة واتساب السابقة
+        id: restore-session
         uses: actions/cache/restore@v4
         with:
           path: |
-            ملف_الاتصال
-            ArthurSession
-            ArthurSubBot
-            BackupSession
-            session
-            sessions
-            auth_info_baileys
-          key: arthur-session-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+            ملف_الاتصال/
+          key: arthur-session-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            arthur-session-v1-${{ github.ref_name }}-
-            arthur-session-v1-
+            arthur-session-${{ github.ref_name }}-
+            arthur-session-
 
       # ==========================================
-      # 3. NODE ENVIRONMENT
+      # 3. تجهيز Node.js 24
       # ==========================================
-      - name: تجهيز Node.js
+      - name: تجهيز بيئة Node.js الإصدار 24
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
 
-      - name: تثبيت المكتبات
+      # ==========================================
+      # 4. تثبيت المكتبات
+      # ==========================================
+      - name: تثبيت مكتبات المشروع
         shell: bash
         run: |
           set -e
+
           if [ -f package-lock.json ]; then
-            npm ci
+            npm ci || {
+              echo "❌ فشل تثبيت المكتبات باستخدام npm ci"
+              exit 1
+            }
           else
-            npm install
+            npm install || {
+              echo "❌ فشل تثبيت المكتبات باستخدام npm install"
+              exit 1
+            }
           fi
 
-      # ==========================================
-      # 4. RESTORE ENCRYPTED SESSION
-      # ==========================================
-      - name: استرجاع جلسة واتساب المشفرة
-        id: restore-session
-        shell: bash
-        env:
-          ARTHUR_BACKUP_KEY: ${{ secrets.ARTHUR_BACKUP_KEY }}
-        run: |
-          set -Eeuo pipefail
-
-          BACKUP_BRANCH="arthur-session-backup"
-          BACKUP_FILE="session-backup.tar.enc"
-          TEMP_DIR="/tmp/arthur-session"
-          BACKUP_DIR="/tmp/arthur-backup-repository"
-
-          mkdir -p "$TEMP_DIR"
-
-          if [ -z "${ARTHUR_BACKUP_KEY:-}" ]; then
-            echo "ERROR: ARTHUR_BACKUP_KEY is missing."
-            exit 1
-          fi
-
-          echo "Checking encrypted session backup..."
-
-          if git fetch origin \
-            "refs/heads/${BACKUP_BRANCH}:refs/remotes/origin/${BACKUP_BRANCH}" \
-            --quiet 2>/dev/null; then
-
-            if git cat-file -e \
-              "origin/${BACKUP_BRANCH}:${BACKUP_FILE}" 2>/dev/null; then
-
-              git show \
-                "origin/${BACKUP_BRANCH}:${BACKUP_FILE}" \
-                > "$TEMP_DIR/$BACKUP_FILE"
-
-              openssl enc -d -aes-256-cbc \
-                -pbkdf2 -iter 200000 \
-                -in "$TEMP_DIR/$BACKUP_FILE" \
-                -out "$TEMP_DIR/session.tar.gz" \
-                -pass env:ARTHUR_BACKUP_KEY
-
-              tar -tzf "$TEMP_DIR/session.tar.gz" >/dev/null
-
-              # Encrypted backup takes priority over old cache.
-              tar -xzf "$TEMP_DIR/session.tar.gz" \
-                -C "$GITHUB_WORKSPACE"
-
-              echo "SESSION_RESTORED=true" >> "$GITHUB_OUTPUT"
-              echo "SUCCESS: Encrypted session restored."
-
-            else
-              echo "No encrypted archive found."
-              echo "Using old cache if available."
-              echo "SESSION_RESTORED=false" >> "$GITHUB_OUTPUT"
-            fi
-
-            git worktree add --detach "$BACKUP_DIR" \
-              "origin/${BACKUP_BRANCH}"
-
-            git -C "$BACKUP_DIR" switch -C "$BACKUP_BRANCH"
-
-          else
-
-            echo "No backup branch exists yet."
-            echo "Old cache will be used if available."
-            echo "SESSION_RESTORED=false" >> "$GITHUB_OUTPUT"
-
-            git worktree add --detach "$BACKUP_DIR" HEAD
-
-            git -C "$BACKUP_DIR" checkout --orphan \
-              "$BACKUP_BRANCH"
-
-            git -C "$BACKUP_DIR" rm -rf . \
-              >/dev/null 2>&1 || true
-
-            git -C "$BACKUP_DIR" clean -fdx \
-              >/dev/null 2>&1 || true
-
-          fi
-
-          git -C "$BACKUP_DIR" config \
-            user.name "github-actions[bot]"
-
-          git -C "$BACKUP_DIR" config \
-            user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          echo "BACKUP_DIR=$BACKUP_DIR" >> "$GITHUB_ENV"
-          echo "TEMP_DIR=$TEMP_DIR" >> "$GITHUB_ENV"
+          echo "✅ تم تثبيت المكتبات بنجاح"
 
       # ==========================================
-      # 5. PROTECT SESSION
+      # 5. حماية ملفات الاتصال والمكتبات
       # ==========================================
-      - name: حماية ملفات الاتصال من المستودع الرئيسي
+      - name: حماية ملفات الاتصال والمكتبات من الرفع
         shell: bash
         run: |
           set -Eeuo pipefail
 
           touch .gitignore
 
-          add_ignore() {
-            grep -qxF "$1" .gitignore || echo "$1" >> .gitignore
-          }
+          grep -qxF "ملف_الاتصال/" .gitignore || \
+            echo "ملف_الاتصال/" >> .gitignore
 
-          add_ignore "node_modules/"
-          add_ignore "**/node_modules/"
-          add_ignore ".env"
-          add_ignore ".env.*"
-          add_ignore "!/.env.example"
+          grep -qxF "node_modules/" .gitignore || \
+            echo "node_modules/" >> .gitignore
 
-          add_ignore "ملف_الاتصال/"
-          add_ignore "ArthurSession/"
-          add_ignore "ArthurSubBot/"
-          add_ignore "BackupSession/"
-          add_ignore "session/"
-          add_ignore "sessions/"
-          add_ignore "auth_info_baileys/"
+          grep -qxF ".env" .gitignore || \
+            echo ".env" >> .gitignore
 
-          add_ignore "**/creds.json"
-          add_ignore "*.db"
-          add_ignore "*.db-*"
-          add_ignore "*.pem"
-          add_ignore "*.key"
-          add_ignore "*.p12"
-          add_ignore "*.pfx"
-          add_ignore "*.log"
-          add_ignore "**/temp/"
-          add_ignore "**/*.tmp"
+          grep -qxF ".env.*" .gitignore || \
+            echo ".env.*" >> .gitignore
 
-          # Remove tracked session files from main branch index.
-          # This does not delete local session files.
           git rm -r --cached --ignore-unmatch -- \
             "ملف_الاتصال" \
-            "ArthurSession" \
-            "ArthurSubBot" \
-            "BackupSession" \
-            "session" \
-            "sessions" \
-            "auth_info_baileys" \
+            "node_modules" \
             >/dev/null 2>&1 || true
 
-          echo "Session protection enabled."
+          echo "✅ تمت حماية مجلد الاتصال والمكتبات"
 
       # ==========================================
-      # 6. RUN + AUTO SAVE + AUTO UPLOAD
+      # 6. تشغيل البوت والرفع التلقائي
       # ==========================================
-      - name: تشغيل البوت والحفظ والرفع التلقائي
-        shell: bash
+      - name: تشغيل البوت وحفظ تعديلات المشروع تلقائياً
         env:
-          ARTHUR_BACKUP_KEY: ${{ secrets.ARTHUR_BACKUP_KEY }}
           NODE_OPTIONS: "--max-old-space-size=4096"
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          ARTHUR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-          BACKUP_INTERVAL: "300"
+        shell: bash
         run: |
-          set -Eeuo pipefail
+          set +e
 
-          BACKUP_FILE="session-backup.tar.enc"
-          BACKUP_BRANCH="arthur-session-backup"
-          MAIN_BRANCH="${GITHUB_REF_NAME:-main}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          SESSION_DIRS=(
-            "ملف_الاتصال"
-            "ArthurSession"
-            "ArthurSubBot"
-            "BackupSession"
-            "session"
-            "sessions"
-            "auth_info_baileys"
-          )
+          if [ ! -f .gitignore ]; then
+            touch .gitignore
+          fi
 
-          BOT_PID=""
-          LAST_SAVE=0
+          grep -qxF "node_modules/" .gitignore || \
+            echo "node_modules/" >> .gitignore
 
-          # ========================================
-          # SAVE ENCRYPTED SESSION
-          # ========================================
-          save_session() {
+          grep -qxF "ملف_الاتصال/" .gitignore || \
+            echo "ملف_الاتصال/" >> .gitignore
 
-            echo "Saving WhatsApp session..."
+          grep -qxF ".env" .gitignore || \
+            echo ".env" >> .gitignore
 
-            local existing_dirs=()
-            local dir
-
-            for dir in "${SESSION_DIRS[@]}"; do
-              if [ -d "$dir" ]; then
-                existing_dirs+=("$dir")
-              fi
-            done
-
-            if [ "${#existing_dirs[@]}" -eq 0 ]; then
-              echo "No session folders found."
-              echo "Previous backup preserved."
-              return 0
-            fi
-
-            mkdir -p "$TEMP_DIR"
-
-            tar -czf "$TEMP_DIR/session.tar.gz" \
-              -C "$GITHUB_WORKSPACE" \
-              "${existing_dirs[@]}"
-
-            tar -tzf "$TEMP_DIR/session.tar.gz" >/dev/null
-
-            openssl enc -aes-256-cbc \
-              -salt -pbkdf2 -iter 200000 \
-              -in "$TEMP_DIR/session.tar.gz" \
-              -out "$TEMP_DIR/$BACKUP_FILE" \
-              -pass env:ARTHUR_BACKUP_KEY
-
-            test -s "$TEMP_DIR/$BACKUP_FILE"
-
-            cp "$TEMP_DIR/$BACKUP_FILE" \
-              "$BACKUP_DIR/$BACKUP_FILE"
-
-            git -C "$BACKUP_DIR" add -- "$BACKUP_FILE"
-
-            if git -C "$BACKUP_DIR" diff --cached --quiet; then
-              echo "Session backup unchanged."
-              return 0
-            fi
-
-            git -C "$BACKUP_DIR" commit \
-              -m "ARTHUR encrypted session backup" --quiet
-
-            git -C "$BACKUP_DIR" push origin \
-              "HEAD:refs/heads/${BACKUP_BRANCH}"
-
-            echo "SUCCESS: Session backup uploaded."
-          }
+          grep -qxF ".env.*" .gitignore || \
+            echo ".env.*" >> .gitignore
 
           # ========================================
-          # SAVE PROJECT CHANGES
+          # حفظ ورفع تعديلات المشروع
           # ========================================
-          save_project() {
+          save_changes() {
 
-            echo "Uploading project changes..."
+            echo "🔍 جاري فحص تعديلات المشروع..."
 
-            git add -A
+            git rm -r --cached --ignore-unmatch \
+              node_modules \
+              yuno_bot/node_modules \
+              "ملف_الاتصال" \
+              2>/dev/null || true
+
+            git rm --cached --ignore-unmatch \
+              .env .env.* \
+              2>/dev/null || true
+
+            git add -A -- . \
+              ':(exclude).gitignore' \
+              ':(exclude)ملف_الاتصال' \
+              ':(exclude)ملف_الاتصال/**' \
+              ':(exclude).env' \
+              ':(exclude).env.*' \
+              ':(exclude)**/.env' \
+              ':(exclude)**/.env.*' \
+              ':(exclude)**/node_modules' \
+              ':(exclude)**/node_modules/**' \
+              ':(exclude)**/creds.json' \
+              ':(exclude)**/*.pem' \
+              ':(exclude)**/*.key' \
+              ':(exclude)**/*.p12' \
+              ':(exclude)**/*.pfx' \
+              ':(exclude)**/*.log' \
+              ':(exclude)**/temp/**' || {
+                echo "❌ فشل إضافة تعديلات المشروع"
+                return 1
+              }
+
+            git add .gitignore || true
 
             if ! git diff --cached --quiet; then
+
               git commit \
-                -m "Automatic ARTHUR BOT update" --quiet
+                -m "Auto-save ARTHUR repository progress" || {
+                  echo "❌ فشل إنشاء الحفظ المحلي"
+                  return 1
+                }
+
+              echo "✅ تم إنشاء حفظ للتعديلات"
+
+            else
+              echo "ℹ️ لا توجد تعديلات جديدة للرفع"
+              return 0
             fi
 
             git fetch origin \
-              "+refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" \
-              --quiet
+              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
+                echo "❌ فشل جلب آخر تحديثات GitHub"
+                return 1
+              }
 
             if [ "$(git rev-list --count \
-              "origin/${MAIN_BRANCH}..HEAD")" -gt 0 ]; then
+              "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
 
-              if ! git push origin \
-                "HEAD:refs/heads/${MAIN_BRANCH}" --quiet; then
+              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
 
-                echo "Push failed. Synchronizing..."
+                echo "⚠️ فشل الرفع الأول، جاري مزامنة التعديلات..."
 
                 git fetch origin \
-                  "+refs/heads/${MAIN_BRANCH}:refs/remotes/origin/${MAIN_BRANCH}" \
-                  --quiet
+                  "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
+                    echo "❌ فشل جلب التحديثات للمزامنة"
+                    return 1
+                  }
 
-                if ! git rebase "origin/${MAIN_BRANCH}"; then
-                  git rebase --abort 2>/dev/null || true
-                  echo "ERROR: Project merge conflict."
+                git -c rebase.autoStash=true rebase \
+                  "origin/${GITHUB_REF_NAME}" || {
+                    git rebase --abort || true
+                    echo "❌ حدث تعارض أثناء المزامنة"
+                    return 1
+                  }
+
+                git push origin "HEAD:${GITHUB_REF_NAME}" || {
+                  echo "❌ فشل رفع التعديلات بعد المزامنة"
                   return 1
-                fi
-
-                git push origin \
-                  "HEAD:refs/heads/${MAIN_BRANCH}"
+                }
               fi
 
-              echo "SUCCESS: Project changes uploaded."
+              echo "✅ تم رفع تعديلات المشروع إلى GitHub بنجاح"
 
             else
-              echo "No new project changes."
+              echo "ℹ️ لا توجد تعديلات جديدة تحتاج إلى الرفع"
             fi
           }
 
           # ========================================
-          # SAFE SHUTDOWN
+          # الإيقاف والحفظ النهائي
           # ========================================
-          shutdown() {
+          cleanup_and_exit() {
 
-            echo "Stopping bot..."
+            echo "🛑 جاري إيقاف البوت وحفظ التعديلات..."
 
-            trap - TERM INT
+            save_changes || \
+              echo "❌ فشل الحفظ النهائي"
 
-            if [ -n "${BOT_PID:-}" ]; then
-              kill -TERM -- "-$BOT_PID" 2>/dev/null || true
-              wait "$BOT_PID" 2>/dev/null || true
-              BOT_PID=""
-            fi
-
-            save_session || echo "WARNING: Final session backup failed."
-
-            save_project || echo "WARNING: Final project upload failed."
-
-            exit 0
+            exit "${1:-0}"
           }
 
-          trap shutdown TERM INT
+          trap 'cleanup_and_exit 0' SIGTERM SIGINT
 
-          echo "========================================"
-          echo "       ARTHUR BOT PROTECTED RUNNER"
-          echo "========================================"
+          echo "======================================"
+          echo "      ARTHUR BOT - NODE.JS 24"
+          echo "======================================"
 
-          # Save migrated cache session immediately.
-          save_session || {
-            echo "ERROR: Initial session backup failed."
-            exit 1
-          }
+          echo "🚀 بدأ نظام تشغيل البوت والرفع التلقائي"
 
-          save_project || {
-            echo "WARNING: Initial project upload failed."
-          }
+          save_changes || \
+            echo "⚠️ فشل الرفع الأول، ستتم إعادة المحاولة"
 
-          LAST_SAVE=$(date +%s)
-          RESTART_DELAY=10
+          RESTART_DELAY=2
 
           # ========================================
-          # BOT RESTART LOOP
+          # تشغيل البوت وإعادة تشغيله
           # ========================================
           while true; do
 
-            echo "Starting ARTHUR BOT..."
+            echo "🚀 جاري تشغيل ARTHUR BOT..."
 
-            setsid npm start &
+            node start.js &
             BOT_PID=$!
 
-            echo "BOT PID: $BOT_PID"
+            echo "✅ بدأ البوت. رقم العملية: $BOT_PID"
+
+            LAST_SAVE=$(date +%s)
 
             while kill -0 "$BOT_PID" 2>/dev/null; do
 
-              sleep 10
+              sleep 5
 
               NOW=$(date +%s)
 
-              if [ $((NOW - LAST_SAVE)) -ge "$BACKUP_INTERVAL" ]; then
+              if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
 
-                if save_session; then
-                  LAST_SAVE=$(date +%s)
-                else
-                  echo "WARNING: Session backup failed."
+                if kill -0 "$BOT_PID" 2>/dev/null; then
+
+                  echo "⏳ حان موعد الحفظ الدوري..."
+
+                  save_changes || \
+                    echo "❌ فشل الحفظ الدوري، ستتم إعادة المحاولة"
+
                 fi
 
-                save_project || {
-                  echo "WARNING: Project upload failed."
-                }
-
+                LAST_SAVE=$(date +%s)
               fi
 
             done
 
-            if wait "$BOT_PID"; then
-              BOT_STATUS=0
-            else
-              BOT_STATUS=$?
-            fi
+            wait "$BOT_PID"
+            BOT_STATUS=$?
 
-            BOT_PID=""
+            echo "⚠️ توقف البوت. رمز الخروج: $BOT_STATUS"
 
-            echo "Bot stopped. Exit code: $BOT_STATUS"
+            save_changes || \
+              echo "❌ فشل حفظ التعديلات بعد توقف البوت"
 
-            save_session || echo "WARNING: Session backup failed."
-
-            save_project || echo "WARNING: Project upload failed."
-
-            LAST_SAVE=$(date +%s)
-
-            echo "Restarting in ${RESTART_DELAY} seconds..."
+            echo "🔄 ستتم إعادة تشغيل البوت بعد ${RESTART_DELAY} ثانية..."
 
             sleep "$RESTART_DELAY"
 
-            RESTART_DELAY=$((RESTART_DELAY + 10))
+            RESTART_DELAY=$((RESTART_DELAY + 2))
 
-            if [ "$RESTART_DELAY" -gt 60 ]; then
-              RESTART_DELAY=60
+            if [ "$RESTART_DELAY" -gt 30 ]; then
+              RESTART_DELAY=30
             fi
 
           done
+
+      # ==========================================
+      # 7. حفظ جلسة واتساب في Cache
+      # ==========================================
+      - name: حفظ جلسة واتساب في ذاكرة Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ملف_الاتصال/
+          key: arthur-session-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
