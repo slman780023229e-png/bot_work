@@ -21,3 +21,5 @@ auth_info_baileys/
 *.log
 temp/
 tmp/
+**/temp/
+**/*.tmp
