@@ -183,6 +183,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           touch .gitignore
+          # إزالة database/ من .gitignore إذا كان مضافاً سابقاً حتى لا يمنع التقاط مجلدات أو ملفات جديدة داخله
+          sed -i '/^database\/\?$/d' .gitignore 2>/dev/null || true
+
           add_ignore() {
             grep -qxF "$1" .gitignore || echo "$1" >> .gitignore
           }
@@ -211,8 +214,17 @@ jobs:
           add_ignore "temp/"
           add_ignore "tmp/"
 
+          get_branch() {
+            if [ -n "${GITHUB_REF_NAME:-}" ]; then
+              echo "$GITHUB_REF_NAME"
+            else
+              git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main"
+            fi
+          }
+
           save_changes() {
             echo "Checking ARTHUR repository changes..."
+            BRANCH_NAME="$(get_branch)"
 
             if [ -d "ملف_الاتصال" ]; then
               TOTAL_FILES=$(find "ملف_الاتصال" -maxdepth 1 -type f | wc -l)
@@ -257,27 +269,35 @@ jobs:
               ':(exclude)**/*.pfx' \
               ':(exclude)**/*.log' \
               ':(exclude)**/temp/**' \
-              ':(exclude)**/tmp/**' || return 1
+              ':(exclude)**/tmp/**' || {
+              echo "git add encountered an error."
+              return 1
+            }
 
             if ! git diff --cached --quiet; then
+              echo "Staged files to commit:"
+              git diff --cached --name-status
               git commit -m "Auto-save ARTHUR repository progress" || return 1
             else
               echo "No new changes to commit."
               return 0
             fi
 
-            git fetch origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
+            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
 
-            if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
-              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            if [ "$(git rev-list --count "origin/${BRANCH_NAME}..HEAD")" -gt 0 ]; then
+              if ! git push origin "HEAD:${BRANCH_NAME}"; then
                 echo "Push failed. Trying to synchronize..."
-                git fetch origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
-                git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}" || {
+                git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
+                git -c rebase.autoStash=true rebase "origin/${BRANCH_NAME}" || {
                   git rebase --abort || true
                   echo "Rebase conflict. Save failed."
                   return 1
                 }
-                git push origin "HEAD:${GITHUB_REF_NAME}" || return 1
+                git push origin "HEAD:${BRANCH_NAME}" || {
+                  echo "Push failed after rebase. Check branch permissions or token."
+                  return 1
+                }
               fi
               echo "Repository changes saved successfully."
             else
