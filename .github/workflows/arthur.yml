@@ -34,12 +34,92 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Clean Stale Session Keys Older Than 4 Hours
+        env:
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+        run: |
+          node -e '
+            const url = process.env.UPSTASH_REDIS_REST_URL;
+            const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+            const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
+            const now = Date.now();
+
+            async function redis(cmd) {
+              const res = await fetch(url, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify(cmd)
+              });
+              return res.json();
+            }
+
+            (async () => {
+              if (!url || !token) {
+                console.log("Upstash credentials not set; skipping Redis cleanup.");
+                return;
+              }
+
+              try {
+                // 1) إذا كان لديك فهرس زمني في Upstash مثل session_timestamps (hash: key -> timestamp_ms)
+                const tsMapRes = await redis(["HGETALL", "arthur_session_ts"]);
+                const tsList = Array.isArray(tsMapRes.result) ? tsMapRes.result : [];
+                const expiredKeys = [];
+
+                for (let i = 0; i < tsList.length; i += 2) {
+                  const key = tsList[i];
+                  const ts = Number(tsList[i + 1] || 0);
+                  if (
+                    key &&
+                    !key.includes("creds") &&
+                    !key.startsWith("session-") &&
+                    ts > 0 &&
+                    (now - ts) >= FOUR_HOURS_MS
+                  ) {
+                    expiredKeys.push(key);
+                  }
+                }
+
+                // 2) احتياطي: فحص المفاتيح المتكررة المعروفة إذا لم يكن هناك طابع زمني محفوظ
+                if (expiredKeys.length === 0) {
+                  const keysRes = await redis(["KEYS", "*"]);
+                  const allKeys = Array.isArray(keysRes.result) ? keysRes.result : [];
+                  for (const k of allKeys) {
+                    if (
+                      (k.includes("pre-key") || k.includes("sender-key-memory")) &&
+                      !k.includes("creds") &&
+                      !k.startsWith("session-")
+                    ) {
+                      expiredKeys.push(k);
+                    }
+                  }
+                }
+
+                if (expiredKeys.length > 0) {
+                  for (let i = 0; i < expiredKeys.length; i += 100) {
+                    const batch = expiredKeys.slice(i, i + 100);
+                    await redis(["DEL", ...batch]);
+                    await redis(["HDEL", "arthur_session_ts", ...batch]);
+                  }
+                  console.log(`Cleaned ${expiredKeys.length} stale session keys (>= 4h).`);
+                } else {
+                  console.log("No stale session keys (>= 4h) found.");
+                }
+              } catch (err) {
+                console.log("Redis cleanup skipped:", err.message);
+              }
+            })();
+          '
+
       - name: Run Bot with Automatic Repository Saving
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          ARTHUR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         shell: bash
@@ -49,74 +129,80 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # حماية: انشاء .gitignore اذا مو موجود، عشان ما يرفع المكتبة ابدا
-          if [ ! -f .gitignore ]; then
-            touch .gitignore
+          BRANCH_NAME="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
+          BRANCH_NAME="${BRANCH_NAME:-main}"
+
+          if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPOSITORY" ]; then
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           fi
-          grep -qxF "node_modules/" .gitignore || echo "node_modules/" >> .gitignore
-          grep -qxF "**/node_modules/" .gitignore || echo "**/node_modules/" >> .gitignore
-          grep -qxF ".env" .gitignore || echo ".env" >> .gitignore
-          grep -qxF "**/auth_info_baileys/" .gitignore || echo "**/auth_info_baileys/" >> .gitignore
-          grep -qxF "**/creds.json" .gitignore || echo "**/creds.json" >> .gitignore
+
+          # حماية: ضمان وجود قواعد الاستبعاد دون مسح ما هو موجود
+          touch .gitignore
+          for rule in "node_modules/" "**/node_modules/" ".env" ".env.*" "ملف_الاتصال/" "**/ملف_الاتصال/" "**/auth_info_baileys/" "**/creds.json" "**/*.log"; do
+            grep -qxF "$rule" .gitignore || echo "$rule" >> .gitignore
+          done
 
           save_changes() {
             echo "Checking repository changes..."
 
-            # اهم خطوة: حذف المكتبة والملفات الحساسة من التتبع اذا كانت مرفوعة بالغلط، بدون حذفها من السيرفر
+            # تنظيف الملفات المؤقتة الأقدم من 4 ساعات داخل مجلد الاتصال إن وُجدت دون مسح creds أو الجلسة الأساسية
+            if [ -d "ملف_الاتصال" ]; then
+              find "ملف_الاتصال" -type f -mmin +240 ! -name "creds.json" ! -name "session-*" -delete 2>/dev/null || true
+            fi
+
+            # إزالة الملفات الحساسة من تتبع Git فقط (دون حذفها من بيئة التشغيل)
             git rm -r --cached --ignore-unmatch node_modules yuno_bot/node_modules "ملف_الاتصال" auth_info_baileys 2>/dev/null || true
             git rm --cached --ignore-unmatch .env .env.* "**/creds.json" "**/*.pem" "**/*.key" 2>/dev/null || true
 
-            git add -A -- . \
-              ':(exclude).gitignore' \
-              ':(exclude)ملف_الاتصال/creds.json' \
-              ':(exclude)ملف_الاتصال/*.json' \
+            # إضافة كافة المجلدات والملفات الجديدة/المعدلة مع استبعاد الحساس والمؤقت
+            git add --ignore-errors --all -- . \
+              ':(exclude)ملف_الاتصال/**' \
               ':(exclude)**/ملف_الاتصال/**' \
               ':(exclude).env' \
               ':(exclude).env.*' \
               ':(exclude)**/.env' \
               ':(exclude)**/.env.*' \
-              ':(exclude)**/node_modules' \
               ':(exclude)**/node_modules/**' \
-              ':(exclude)**/auth_info_baileys' \
               ':(exclude)**/auth_info_baileys/**' \
               ':(exclude)**/creds.json' \
-              ':(exclude)**/*.session' \
-              ':(exclude)**/session' \
-              ':(exclude)**/session/**' \
               ':(exclude)**/*.pem' \
               ':(exclude)**/*.key' \
               ':(exclude)**/*.p12' \
               ':(exclude)**/*.pfx' \
-              ':(exclude)**/*.log' \
-              ':(exclude)**/temp/**' || return 1
+              ':(exclude)**/*.log'
 
-            # تأكد ان .gitignore نفسه يترفع عشان الحماية تستمر
-            git add .gitignore || true
-
-            if ! git diff --cached --quiet; then
-              git commit -m "Auto-save ARTHUR repository progress" || return 1
-            else
+            if git diff --cached --quiet; then
               echo "No new changes to commit."
               return 0
             fi
 
-            git fetch origin \
-              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
+            echo "Staged changes summary:"
+            git diff --cached --name-status
 
-            if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
-              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
-                echo "Push failed; synchronizing with GitHub..."
-                git fetch origin \
-                  "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
-                git -c rebase.autoStash=true rebase \
-                  "origin/${GITHUB_REF_NAME}" || {
-                    git rebase --abort || true
-                    echo "Sync conflict. Changes remain in the runner."
-                    return 1
-                  }
-                git push origin "HEAD:${GITHUB_REF_NAME}" || return 1
+            git commit -m "Auto-save ARTHUR repository progress" || {
+              echo "Git commit failed."
+              return 1
+            }
+
+            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || {
+              echo "Git fetch failed for branch ${BRANCH_NAME}."
+              return 1
+            }
+
+            if [ "$(git rev-list --count "origin/${BRANCH_NAME}..HEAD")" -gt 0 ]; then
+              if ! git push origin "HEAD:${BRANCH_NAME}"; then
+                echo "Push failed; attempting rebase with remote branch..."
+                git -c rebase.autoStash=true rebase "origin/${BRANCH_NAME}" || {
+                  git rebase --abort || true
+                  echo "Rebase conflict detected; changes remain safe in runner."
+                  return 1
+                }
+                git push origin "HEAD:${BRANCH_NAME}" || {
+                  echo "Git push failed after rebase."
+                  return 1
+                }
               fi
-              echo "Repository changes saved successfully."
+              echo "Repository changes pushed successfully to ${BRANCH_NAME}."
             else
               echo "No new commits to push."
             fi
