@@ -1,5 +1,5 @@
 
-name: ARTHUR BOT - تشغيل وحماية الجلسة
+name: ARTHUR BOT - Auto Commit & Push
 
 on:
   workflow_dispatch:
@@ -21,22 +21,16 @@ jobs:
 
     steps:
 
-      # ==========================================
-      # 1. سحب ملفات المشروع
-      # ==========================================
-      - name: سحب ملفات ARTHUR BOT
+      # 1. سحب المشروع
+      - name: سحب ملفات المشروع
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
 
-      # ==========================================
       # 2. استعادة جلسة واتساب
-      # ==========================================
-      - name: استعادة جلسة واتساب السابقة
-        id: restore-session
+      - name: استعادة جلسة واتساب
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -46,221 +40,195 @@ jobs:
             arthur-session-${{ github.ref_name }}-
             arthur-session-
 
-      # ==========================================
-      # 3. تجهيز Node.js 24
-      # ==========================================
-      - name: تجهيز بيئة Node.js الإصدار 24
+      # 3. إعداد Node.js
+      - name: تجهيز Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
 
-      # ==========================================
       # 4. تثبيت المكتبات
-      # ==========================================
-      - name: تثبيت مكتبات المشروع
+      - name: تثبيت المكتبات
         shell: bash
         run: |
           set -e
 
           if [ -f package-lock.json ]; then
-            npm ci || {
-              echo "❌ فشل تثبيت المكتبات باستخدام npm ci"
-              exit 1
-            }
+            npm ci
           else
-            npm install || {
-              echo "❌ فشل تثبيت المكتبات باستخدام npm install"
-              exit 1
-            }
+            npm install
           fi
 
-          echo "✅ تم تثبيت المكتبات بنجاح"
+          echo "✅ تم تثبيت المكتبات"
 
-      # ==========================================
-      # 5. حماية ملفات الاتصال والمكتبات
-      # ==========================================
-      - name: حماية ملفات الاتصال والمكتبات من الرفع
+      # 5. حماية الملفات المستثناة
+      - name: حماية الجلسة والمكتبات
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           touch .gitignore
 
-          grep -qxF "ملف_الاتصال/" .gitignore || \
-            echo "ملف_الاتصال/" >> .gitignore
+          add_ignore() {
+            grep -qxF "$1" .gitignore || echo "$1" >> .gitignore
+          }
 
-          grep -qxF "node_modules/" .gitignore || \
-            echo "node_modules/" >> .gitignore
+          add_ignore "node_modules/"
+          add_ignore "**/node_modules/"
+          add_ignore "ملف_الاتصال/"
+          add_ignore "ArthurSession/"
+          add_ignore "ArthurSubBot/"
+          add_ignore "BackupSession/"
+          add_ignore "session/"
+          add_ignore "sessions/"
+          add_ignore "auth_info_baileys/"
+          add_ignore ".env"
+          add_ignore ".env.*"
+          add_ignore "!/.env.example"
+          add_ignore "**/creds.json"
+          add_ignore "*.db"
+          add_ignore "*.db.*"
+          add_ignore "*.pem"
+          add_ignore "*.key"
+          add_ignore "*.p12"
+          add_ignore "*.pfx"
+          add_ignore "*.log"
+          add_ignore "**/temp/"
+          add_ignore "**/*.tmp"
 
-          grep -qxF ".env" .gitignore || \
-            echo ".env" >> .gitignore
-
-          grep -qxF ".env.*" .gitignore || \
-            echo ".env.*" >> .gitignore
-
+          # إزالة الملفات الخاصة من فهرس Git دون حذفها محلياً
           git rm -r --cached --ignore-unmatch -- \
             "ملف_الاتصال" \
             "node_modules" \
-            >/dev/null 2>&1 || true
+            "ArthurSession" \
+            "ArthurSubBot" \
+            "BackupSession" \
+            "session" \
+            "sessions" \
+            "auth_info_baileys" || true
 
-          echo "✅ تمت حماية مجلد الاتصال والمكتبات"
+          echo "✅ تمت حماية الملفات"
 
-      # ==========================================
       # 6. تشغيل البوت والرفع التلقائي
-      # ==========================================
-      - name: تشغيل البوت وحفظ تعديلات المشروع تلقائياً
+      - name: تشغيل البوت ورفع تعديلات المشروع
+        shell: bash
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
           MONGO_URI: ${{ secrets.MONGO_URI }}
           ARTHUR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
-        shell: bash
+
         run: |
           set +e
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [ ! -f .gitignore ]; then
-            touch .gitignore
-          fi
-
-          grep -qxF "node_modules/" .gitignore || \
-            echo "node_modules/" >> .gitignore
-
-          grep -qxF "ملف_الاتصال/" .gitignore || \
-            echo "ملف_الاتصال/" >> .gitignore
-
-          grep -qxF ".env" .gitignore || \
-            echo ".env" >> .gitignore
-
-          grep -qxF ".env.*" .gitignore || \
-            echo ".env.*" >> .gitignore
-
-          # ========================================
-          # حفظ ورفع تعديلات المشروع
-          # ========================================
+          # =====================================
+          # دالة الحفظ والرفع
+          # =====================================
           save_changes() {
 
-            echo "🔍 جاري فحص تعديلات المشروع..."
+            echo "🔍 فحص ملفات المشروع..."
 
-            git rm -r --cached --ignore-unmatch \
-              node_modules \
-              yuno_bot/node_modules \
-              "ملف_الاتصال" \
-              2>/dev/null || true
+            # إضافة جميع الملفات الجديدة والمعدلة والمحذوفة
+            git add -A -- . || {
+              echo "❌ فشل جمع الملفات"
+              return 1
+            }
 
-            git rm --cached --ignore-unmatch \
-              .env .env.* \
-              2>/dev/null || true
+            if git diff --cached --quiet; then
+              echo "ℹ️ لا توجد تعديلات جديدة"
+            else
 
-            git add -A -- . \
-              ':(exclude).gitignore' \
-              ':(exclude)ملف_الاتصال' \
-              ':(exclude)ملف_الاتصال/**' \
-              ':(exclude).env' \
-              ':(exclude).env.*' \
-              ':(exclude)**/.env' \
-              ':(exclude)**/.env.*' \
-              ':(exclude)**/node_modules' \
-              ':(exclude)**/node_modules/**' \
-              ':(exclude)**/creds.json' \
-              ':(exclude)**/*.pem' \
-              ':(exclude)**/*.key' \
-              ':(exclude)**/*.p12' \
-              ':(exclude)**/*.pfx' \
-              ':(exclude)**/*.log' \
-              ':(exclude)**/temp/**' || {
-                echo "❌ فشل إضافة تعديلات المشروع"
+              echo "📦 الملفات التي سيتم حفظها:"
+              git diff --cached --name-status
+
+              git commit -m "Auto-save ARTHUR BOT" || {
+                echo "❌ فشل إنشاء Commit"
                 return 1
               }
 
-            git add .gitignore || true
+              echo "✅ تم إنشاء Commit"
+            fi
 
-            if ! git diff --cached --quiet; then
+            # جلب أحدث نسخة من المستودع
+            git fetch origin \
+              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
+                echo "❌ فشل جلب تحديثات GitHub"
+                return 1
+              }
 
-              git commit \
-                -m "Auto-save ARTHUR repository progress" || {
-                  echo "❌ فشل إنشاء الحفظ المحلي"
-                  return 1
-                }
+            AHEAD=$(git rev-list --count \
+              "origin/${GITHUB_REF_NAME}..HEAD") || return 1
 
-              echo "✅ تم إنشاء حفظ للتعديلات"
-
-            else
-              echo "ℹ️ لا توجد تعديلات جديدة للرفع"
+            if [ "$AHEAD" -eq 0 ]; then
+              echo "✅ لا توجد تعديلات معلقة للرفع"
               return 0
             fi
 
-            git fetch origin \
-              "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
-                echo "❌ فشل جلب آخر تحديثات GitHub"
-                return 1
-              }
+            echo "📤 جاري رفع $AHEAD Commit..."
 
-            if [ "$(git rev-list --count \
-              "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
+            # المحاولة الأولى
+            if ! git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
 
-              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "⚠️ فشل الرفع الأول، جاري المزامنة..."
 
-                echo "⚠️ فشل الرفع الأول، جاري مزامنة التعديلات..."
+              git fetch origin \
+                "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
 
-                git fetch origin \
-                  "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
-                    echo "❌ فشل جلب التحديثات للمزامنة"
-                    return 1
-                  }
-
-                git -c rebase.autoStash=true rebase \
-                  "origin/${GITHUB_REF_NAME}" || {
-                    git rebase --abort || true
-                    echo "❌ حدث تعارض أثناء المزامنة"
-                    return 1
-                  }
-
-                git push origin "HEAD:${GITHUB_REF_NAME}" || {
-                  echo "❌ فشل رفع التعديلات بعد المزامنة"
+              git -c rebase.autoStash=true rebase \
+                "origin/${GITHUB_REF_NAME}" || {
+                  git rebase --abort || true
+                  echo "❌ حدث تعارض أثناء المزامنة"
                   return 1
                 }
-              fi
 
-              echo "✅ تم رفع تعديلات المشروع إلى GitHub بنجاح"
-
-            else
-              echo "ℹ️ لا توجد تعديلات جديدة تحتاج إلى الرفع"
+              # المحاولة الثانية
+              git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}" || {
+                echo "❌ فشل الرفع بعد إعادة المحاولة"
+                return 1
+              }
             fi
+
+            echo "=================================="
+            echo "✅ تم رفع التعديلات إلى GitHub"
+            echo "=================================="
+
+            return 0
           }
 
-          # ========================================
+          # =====================================
           # الإيقاف والحفظ النهائي
-          # ========================================
+          # =====================================
           cleanup_and_exit() {
 
-            echo "🛑 جاري إيقاف البوت وحفظ التعديلات..."
+            echo "🛑 جاري إيقاف البوت..."
 
-            save_changes || \
-              echo "❌ فشل الحفظ النهائي"
+            if [ -n "${BOT_PID:-}" ]; then
+              kill -TERM "$BOT_PID" 2>/dev/null || true
+              wait "$BOT_PID" 2>/dev/null || true
+              BOT_PID=""
+            fi
+
+            save_changes || echo "❌ فشل الحفظ النهائي"
 
             exit "${1:-0}"
           }
 
           trap 'cleanup_and_exit 0' SIGTERM SIGINT
 
-          echo "======================================"
-          echo "      ARTHUR BOT - NODE.JS 24"
-          echo "======================================"
+          echo "=================================="
+          echo "       ARTHUR BOT RUNNER"
+          echo "       NODE.JS 24"
+          echo "=================================="
 
-          echo "🚀 بدأ نظام تشغيل البوت والرفع التلقائي"
+          # حفظ التعديلات قبل تشغيل البوت
+          save_changes || echo "⚠️ ستتم إعادة محاولة الحفظ"
 
-          save_changes || \
-            echo "⚠️ فشل الرفع الأول، ستتم إعادة المحاولة"
+          RESTART_DELAY=5
 
-          RESTART_DELAY=2
-
-          # ========================================
-          # تشغيل البوت وإعادة تشغيله
-          # ========================================
           while true; do
 
             echo "🚀 جاري تشغيل ARTHUR BOT..."
@@ -268,7 +236,7 @@ jobs:
             node start.js &
             BOT_PID=$!
 
-            echo "✅ بدأ البوت. رقم العملية: $BOT_PID"
+            echo "✅ بدأ البوت PID: $BOT_PID"
 
             LAST_SAVE=$(date +%s)
 
@@ -280,14 +248,10 @@ jobs:
 
               if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
 
-                if kill -0 "$BOT_PID" 2>/dev/null; then
+                echo "⏳ حان وقت الحفظ الدوري..."
 
-                  echo "⏳ حان موعد الحفظ الدوري..."
-
-                  save_changes || \
-                    echo "❌ فشل الحفظ الدوري، ستتم إعادة المحاولة"
-
-                fi
+                save_changes || \
+                  echo "❌ فشل الرفع الدوري، ستتم المحاولة لاحقاً"
 
                 LAST_SAVE=$(date +%s)
               fi
@@ -296,13 +260,14 @@ jobs:
 
             wait "$BOT_PID"
             BOT_STATUS=$?
+            BOT_PID=""
 
-            echo "⚠️ توقف البوت. رمز الخروج: $BOT_STATUS"
+            echo "⚠️ توقف البوت برمز: $BOT_STATUS"
 
             save_changes || \
-              echo "❌ فشل حفظ التعديلات بعد توقف البوت"
+              echo "❌ فشل حفظ التعديلات بعد التوقف"
 
-            echo "🔄 ستتم إعادة تشغيل البوت بعد ${RESTART_DELAY} ثانية..."
+            echo "🔄 إعادة تشغيل البوت بعد ${RESTART_DELAY} ثوانٍ..."
 
             sleep "$RESTART_DELAY"
 
@@ -314,10 +279,8 @@ jobs:
 
           done
 
-      # ==========================================
       # 7. حفظ جلسة واتساب في Cache
-      # ==========================================
-      - name: حفظ جلسة واتساب في ذاكرة Cache
+      - name: حفظ جلسة واتساب
         if: always()
         uses: actions/cache/save@v4
         with:
