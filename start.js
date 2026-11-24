@@ -8,12 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ENTRY_FILE = path.join(__dirname, 'index.js');
 const SESSION_DIR = path.join(__dirname, 'ملف_الاتصال');
-const SESSION_ID = process.env.REDIS_SESSION_ID || 'arthur-session';
 const RESTART_DELAY = 3000;
-const SYNC_INTERVAL = 15000; // مزامنة الجلسة مع Upstash Redis كل 15 ثانية
-
-const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 
 const gold = chalk.hex('#D4AF37');
 const red = chalk.hex('#C62828');
@@ -23,143 +18,19 @@ const green = chalk.hex('#42D392');
 
 let child = null;
 let restartTimer = null;
-let syncTimer = null;
 let shuttingDown = false;
 let launching = false;
-let lastSyncHash = '';
 
-function isUpstashConfigured() {
-  return Boolean(UPSTASH_URL && UPSTASH_TOKEN);
-}
-
-async function upstashCommand(commandArgs) {
-  const response = await fetch(UPSTASH_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${UPSTASH_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(commandArgs),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${errText || response.statusText}`);
-  }
-
-  const data = await response.json();
-  if (data.error) {
-    throw new Error(data.error);
-  }
-  return data.result;
-}
-
-async function upstashPipeline(commands) {
-  if (!commands.length) return [];
-  const response = await fetch(`${UPSTASH_URL}/pipeline`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${UPSTASH_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(commands),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    throw new Error(`Pipeline HTTP ${response.status}: ${errText || response.statusText}`);
-  }
-
-  const results = await response.json();
-  for (const item of results) {
-    if (item && item.error) {
-      throw new Error(item.error);
-    }
-  }
-  return results;
-}
-
-async function restoreSessionFromUpstash() {
+function prepareSessionDirectory() {
   try {
-    if (!isUpstashConfigured()) {
-      console.log(chalk.yellow('⚠️ بيانات Upstash Redis غير مضبوطة؛ سيتم الاعتماد على الجلسة المحلية فقط.'));
-      return;
-    }
-
     fs.mkdirSync(SESSION_DIR, { recursive: true });
-
-    // لا تستبدل جلسة محلية موجودة بنسخة قديمة من قاعدة البيانات.
-    // عند التشغيل على بيئة جديدة (بدون creds.json) نستعيد النسخة المحفوظة.
     if (fs.existsSync(path.join(SESSION_DIR, 'creds.json'))) {
-      console.log(gray('ℹ️ توجد جلسة محلية؛ سيتم الحفاظ عليها ومزامنتها إلى Upstash Redis.'));
-      return;
-    }
-
-    const hashKey = `arthur:session:${SESSION_ID}`;
-    const storedFiles = await upstashCommand(['HGETALL', hashKey]);
-
-    if (!Array.isArray(storedFiles) || storedFiles.length === 0) {
-      console.log(gray('ℹ️ لا توجد جلسة محفوظة في Upstash Redis بعد؛ سيتم حفظها بعد أول ربط.'));
-      return;
-    }
-
-    let restored = 0;
-    for (let i = 0; i < storedFiles.length; i += 2) {
-      const fileName = storedFiles[i];
-      const content = storedFiles[i + 1];
-      if (!fileName || typeof content !== 'string') continue;
-      // حماية المسار: استعادة أسماء الملفات المباشرة فقط داخل مجلد الجلسة
-      if (path.basename(fileName) !== fileName) continue;
-
-      const targetPath = path.join(SESSION_DIR, fileName);
-      fs.writeFileSync(targetPath, Buffer.from(content, 'base64'));
-      restored++;
-    }
-
-    console.log(green(`🗄️ [Upstash Redis] تم استعادة ${restored} ملف من ملفات الجلسة بنجاح.`));
-  } catch (error) {
-    console.error(red(`❌ فشل استعادة الجلسة من Upstash Redis: ${error.message}`));
-    // لا تبدأ بجلسة فارغة إذا كانت قاعدة البيانات مضبوطة لكن تعذر الوصول إليها؛
-    // هذا يمنع إنشاء جلسة جديدة فوق جلسة محفوظة لا نستطيع قراءتها.
-    if (isUpstashConfigured()) throw error;
-  }
-}
-
-async function syncSessionToUpstash(force = false) {
-  try {
-    if (!isUpstashConfigured() || !fs.existsSync(SESSION_DIR)) return;
-
-    const files = fs.readdirSync(SESSION_DIR, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .sort();
-
-    if (!files.length) return;
-
-    const snapshot = files.map((fileName) => {
-      const fullPath = path.join(SESSION_DIR, fileName);
-      const stat = fs.statSync(fullPath);
-      return `${fileName}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
-    }).join('|');
-
-    if (!force && snapshot === lastSyncHash) return;
-
-    const hashKey = `arthur:session:${SESSION_ID}`;
-    const commands = [];
-
-    for (const fileName of files) {
-      const content = fs.readFileSync(path.join(SESSION_DIR, fileName)).toString('base64');
-      commands.push(['HSET', hashKey, fileName, content]);
-    }
-
-    if (commands.length) {
-      await upstashPipeline(commands);
-      // حماية دائمة: لا نحذف أي ملف جلسة من Upstash عند غيابه محلياً.
-      // يتم تحديث الملفات الموجودة فقط، وتبقى النسخ البعيدة كاحتياط.
-      lastSyncHash = snapshot;
+      console.log(green('💾 [الجلسة المحلية] تم العثور على ملف الاتصال (creds.json) وسيتم استخدامه مباشرة.'));
+    } else {
+      console.log(gray('ℹ️ [الجلسة المحلية] مجلد (ملف_الاتصال) جاهز؛ سيتم حفظ بيانات الجلسة محلياً بعد الربط.'));
     }
   } catch (error) {
-    console.error(chalk.yellow(`⚠️ تعذرت مزامنة الجلسة مع Upstash Redis: ${error.message}`));
+    console.error(red(`❌ خطأ أثناء تجهيز مجلد الجلسة: ${error.message}`));
   }
 }
 
@@ -230,7 +101,7 @@ async function launchBot() {
   }
 
   console.clear();
-  await restoreSessionFromUpstash();
+  prepareSessionDirectory();
   protectSessions();
   clearTemporaryFiles();
   showBanner();
@@ -246,15 +117,8 @@ async function launchBot() {
   console.log('');
   console.log(green('✓ ARTHUR BOT IS STARTING'));
   console.log(gray('ENTRY: index.js'));
-  console.log(gray(isUpstashConfigured() ? `DATABASE: Upstash Redis Sync Active (${SESSION_ID})` : 'DATABASE: Local session only (Upstash credentials not configured)'));
+  console.log(gray('SESSION: Local folder (ملف_الاتصال) + Workflow Cache'));
   console.log('');
-
-  if (syncTimer) clearInterval(syncTimer);
-  // مزامنة أولية بعد بدء العملية، ثم متابعة التغييرات دورياً.
-  syncSessionToUpstash(true).catch(() => {});
-  syncTimer = setInterval(() => {
-    syncSessionToUpstash(false).catch(() => {});
-  }, SYNC_INTERVAL);
 
   try {
     child = spawn(process.execPath, [ENTRY_FILE, ...process.argv.slice(2)], {
@@ -267,13 +131,8 @@ async function launchBot() {
       console.error(red(`❌ تعذر تشغيل index.js: ${error.message}`));
     });
 
-    child.once('close', async (code, signal) => {
+    child.once('close', (code, signal) => {
       child = null;
-      if (syncTimer) {
-        clearInterval(syncTimer);
-        syncTimer = null;
-      }
-      await syncSessionToUpstash(true);
 
       if (shuttingDown) return;
       console.log('');
@@ -300,14 +159,12 @@ async function shutdown(signal) {
   shuttingDown = true;
   console.log(`\n${gold(`إيقاف المشغل بأمان (${signal})...`)}`);
   if (restartTimer) clearTimeout(restartTimer);
-  if (syncTimer) clearInterval(syncTimer);
 
   if (child && !child.killed) {
     child.kill('SIGTERM');
     await sleep(1000);
   }
 
-  await syncSessionToUpstash(true);
   process.exit(0);
 }
 
