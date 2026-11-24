@@ -84,10 +84,7 @@ const PORT = process.env.PORT || process.env.SERVER_PORT || 3000
 
 const sessionDir = path.join(__dirname, 'ملف_الاتصال')
 const dataDir = path.join(__dirname, 'data')
-
-const UPSTASH_REDIS_REST_URL = (process.env.UPSTASH_REDIS_REST_URL || '').trim()
-const UPSTASH_REDIS_REST_TOKEN = (process.env.UPSTASH_REDIS_REST_TOKEN || '').trim()
-const useUpstashSession = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN)
+const MAX_SESSION_FILES = 200
 
 global.creds = 'creds.json'
 global.authFile = 'ArthurSession'
@@ -294,7 +291,111 @@ global.db
   })
 
 // ============================================================
-// SESSION RESTORE CONDITION (مسار محلي موحد تتم مزامنته عبر start.js)
+// SESSION FILE TYPE DETECTION & TRIMMING (MAX 200 FILES)
+// ============================================================
+
+function getSessionFileType(fileName) {
+  const lower = String(fileName).toLowerCase()
+  if (lower === 'creds.json' || lower.includes('creds')) return 'creds'
+  if (lower.startsWith('pre-key') || lower.includes('prekey')) return 'pre-key'
+  if (lower.startsWith('sender-key') || lower.includes('senderkey')) return 'sender-key'
+  if (lower.startsWith('session') || lower.includes('session-')) return 'session'
+  if (lower.startsWith('app-state') || lower.includes('appstate')) return 'app-state'
+  const parts = lower.split(/[-_.]/)
+  return parts.slice(0, 2).join('-') || 'other'
+}
+
+function isProtectedSessionFile(fileName) {
+  const lower = String(fileName).toLowerCase()
+  return lower === 'creds.json' || lower.startsWith('creds-')
+}
+
+async function trimSessionFilesToLimit(dirPath = sessionDir, maxFiles = MAX_SESSION_FILES) {
+  try {
+    if (!fs.existsSync(dirPath)) return 0
+
+    const entries = await fsPromises.readdir(dirPath, { withFileTypes: true })
+    const fileEntries = []
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const fullPath = path.join(dirPath, entry.name)
+      try {
+        const st = await fsPromises.stat(fullPath)
+        fileEntries.push({
+          name: entry.name,
+          fullPath,
+          mtimeMs: st.mtimeMs || 0,
+          type: getSessionFileType(entry.name),
+          protected: isProtectedSessionFile(entry.name)
+        })
+      } catch {}
+    }
+
+    if (fileEntries.length <= maxFiles) return 0
+
+    let excessToDelete = fileEntries.length - maxFiles
+    const deletableByType = new Map()
+    const totalDeletable = []
+
+    for (const item of fileEntries) {
+      if (item.protected) continue
+      if (!deletableByType.has(item.type)) deletableByType.set(item.type, [])
+      deletableByType.get(item.type).push(item)
+      totalDeletable.push(item)
+    }
+
+    if (totalDeletable.length === 0 || excessToDelete <= 0) return 0
+
+    // ترتيب كل نوع من الأقدم إلى الأحدث لحذف الأقدم أولاً
+    for (const [, list] of deletableByType.entries()) {
+      list.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    }
+
+    const toDeleteSet = new Set()
+    const typeKeys = Array.from(deletableByType.keys())
+
+    // توزيع الحذف بالتدريج على الأنواع المختلفة حتى لا يُفرَّغ نوع واحد بالكامل
+    while (excessToDelete > 0) {
+      let deletedInRound = 0
+      for (const type of typeKeys) {
+        if (excessToDelete <= 0) break
+        const list = deletableByType.get(type) || []
+        const candidate = list.find((f) => !toDeleteSet.has(f.fullPath))
+        if (candidate) {
+          toDeleteSet.add(candidate.fullPath)
+          excessToDelete--
+          deletedInRound++
+        }
+      }
+      if (deletedInRound === 0) break
+    }
+
+    let deletedCount = 0
+    for (const targetFile of toDeleteSet) {
+      try {
+        await fsPromises.unlink(targetFile)
+        deletedCount++
+      } catch {}
+    }
+
+    if (deletedCount > 0) {
+      console.log(
+        chalk.cyan(
+          `🧹 [ملف_الاتصال] تم حذف ${deletedCount} ملف قديم من أنواع متعددة والإبقاء على ${fileEntries.length - deletedCount} ملف (الحد الأقصى: ${maxFiles}).`
+        )
+      )
+    }
+
+    return deletedCount
+  } catch (err) {
+    console.warn(chalk.yellow(`⚠️ تعذر تقليص ملفات الجلسة: ${err?.message || err}`))
+    return 0
+  }
+}
+
+// ============================================================
+// SESSION RESTORE CONDITION (مسار محلي موحد بدون Upstash)
 // ============================================================
 
 try {
@@ -317,11 +418,11 @@ try {
     fs.writeFileSync(localCredsPath, process.env.SESSION_DATA, 'utf-8')
     console.log(chalk.green('✅ تم تحميل الجلسة من متغير البيئة لعدم وجود ملف اتصال محلي.'))
   } else {
-    console.log(chalk.gray('ℹ️ سيتم استخدام مجلد ملف_الاتصال كمسار موحد لملفات الجلسة.'))
+    console.log(chalk.gray('ℹ️ سيتم استخدام مجلد ملف_الاتصال كمسار موحد لملفات الجلسة المحلية.'))
   }
 
-  if (useUpstashSession) console.log(chalk.green('🗄️ Upstash Redis configured: session files will be synchronized by start.js.'))
-  else console.log(chalk.yellow('⚠️ إعدادات Upstash Redis غير مضبوطة؛ سيعمل الاتصال محلياً ولن تتم مزامنته إلى قاعدة البيانات.'))
+  // تقليص ملفات الجلسة عند البدء إذا تجاوزت 200 ملف
+  trimSessionFilesToLimit(sessionDir, MAX_SESSION_FILES).catch(() => {})
 } catch (e) {
   console.log(chalk.red('⚠️ خطأ في معالجة مسار الجلسة: ' + e.message))
 }
@@ -436,13 +537,16 @@ async function isValidPhoneNumber(number) {
 // ============================================================
 
 const backupCreds = async () => {
-  if (!fs.existsSync(credsFile)) {
+  const sourceCreds = fs.existsSync(join(sessionDir, global.creds))
+    ? join(sessionDir, global.creds)
+    : credsFile
+  if (!fs.existsSync(sourceCreds)) {
     console.log('[⚠] creds.json not found for backup.')
     return
   }
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const newBackup = join(respaldoDir, `creds-${timestamp}.json`)
-  fs.copyFileSync(credsFile, newBackup)
+  fs.copyFileSync(sourceCreds, newBackup)
   console.log(`[✅] Backup created: ${newBackup}`)
   const backups = fs
     .readdirSync(respaldoDir)
@@ -465,7 +569,12 @@ const restoreCreds = async () => {
     return
   }
   const latestBackup = join(respaldoDir, backups[0])
-  fs.copyFileSync(latestBackup, credsFile)
+  if (fs.existsSync(join(sessionDir, global.creds))) {
+    fs.copyFileSync(latestBackup, join(sessionDir, global.creds))
+  }
+  if (fs.existsSync(global.rutaBot)) {
+    fs.copyFileSync(latestBackup, credsFile)
+  }
   console.log(`[✅] Restored from backup: ${backups[0]}`)
 }
 
@@ -902,6 +1011,8 @@ async function startBot() {
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
     if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
 
+    await trimSessionFilesToLimit(sessionDir, MAX_SESSION_FILES)
+
     const gold = chalk.hex('#D4AF37')
     const blood = chalk.hex('#B32632')
     console.log(gold('╔══════════════════════════════════════════════╗'))
@@ -910,8 +1021,7 @@ async function startBot() {
     console.log(gold('║') + chalk.gray('              CORE SESSION INITIALIZING       ') + gold('║'))
     console.log(gold('╚══════════════════════════════════════════════╝\n'))
 
-    // المسار الموحد: Baileys يكتب ملفات الاتصال محلياً هنا، وstart.js
-    // يستعيدها من Upstash Redis ويزامن كل تغيّر إلى الجلسة.
+    // المسار الموحد: Baileys يكتب ملفات الاتصال محلياً هنا ويحفظها في الكاش عبر الـ Workflow.
     const authStore = await useMultiFileAuthState(sessionDir)
 
     currentAuthStore = authStore
@@ -1075,6 +1185,7 @@ if (opts['server']) {
 
 setInterval(async () => {
   await backupCreds()
+  await trimSessionFilesToLimit(sessionDir, MAX_SESSION_FILES)
   console.log('[♻️] Periodic backup completed.')
 }, 5 * 60 * 1000)
 
@@ -1114,6 +1225,10 @@ async function gracefulShutdown(signal) {
 
   try {
     if (global.db?.data) await global.db.save()
+  } catch {}
+
+  try {
+    await trimSessionFilesToLimit(sessionDir, MAX_SESSION_FILES)
   } catch {}
 
   try {
