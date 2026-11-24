@@ -19,12 +19,12 @@ jobs:
     timeout-minutes: 270
 
     steps:
-      - name: Checkout Code
+      - name: Checkout ARTHUR BOT
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -79,7 +79,7 @@ jobs:
                 const keysRes = await redis(["KEYS", "*"]);
                 const allKeys = Array.isArray(keysRes.result) ? keysRes.result : [];
                 if (allKeys.length <= MAX_KEEP) {
-                  console.log(`Total keys (${allKeys.length}) within limit (${MAX_KEEP}). No deletion needed.`);
+                  console.log(`Total keys (${allKeys.length}) within limit (${MAX_KEEP}).`);
                   return;
                 }
 
@@ -90,7 +90,6 @@ jobs:
                   tsMap.set(tsList[i], Number(tsList[i + 1] || 0));
                 }
 
-                // تجميع المفاتيح حسب النوع وترتيبها (الأحدث أولاً، مع تفضيل المفاتيح غير المنتهية زمنياً)
                 const groups = new Map();
                 for (const key of allKeys) {
                   const type = detectType(key);
@@ -110,7 +109,6 @@ jobs:
                 const keepSet = new Set();
                 let remainingBudget = MAX_KEEP;
 
-                // أولاً: ضمان وجود creds و session الأساسية
                 for (const priorityType of ["creds", "session"]) {
                   const list = groups.get(priorityType) || [];
                   const take = Math.min(list.length, remainingBudget, priorityType === "creds" ? 10 : 40);
@@ -120,7 +118,6 @@ jobs:
                   }
                 }
 
-                // ثانياً: ضمان حصة أساسية من كل نوع موجود لكي لا يختفي أي نوع
                 const typeNames = Array.from(groups.keys());
                 const perTypeMinimum = Math.max(1, Math.floor(remainingBudget / Math.max(1, typeNames.length)));
 
@@ -138,7 +135,6 @@ jobs:
                   }
                 }
 
-                // ثالثاً: إكمال بقية السعة حتى 150 من أحدث المفاتيح المتبقية
                 if (remainingBudget > 0) {
                   const leftovers = [];
                   for (const [, list] of groups.entries()) {
@@ -173,13 +169,11 @@ jobs:
             })();
           '
 
-      - name: Run Bot with Automatic Repository Saving
+      - name: Run ARTHUR BOT
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
@@ -187,13 +181,6 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          BRANCH_NAME="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
-          BRANCH_NAME="${BRANCH_NAME:-main}"
-
-          if [ -n "$GITHUB_TOKEN" ] && [ -n "$GITHUB_REPOSITORY" ]; then
-            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          fi
 
           touch .gitignore
           add_ignore() {
@@ -212,7 +199,6 @@ jobs:
           add_ignore "sessions/"
           add_ignore "/ملف_الاتصال"
           add_ignore "ملف_الاتصال/"
-          add_ignore "database/"
           add_ignore "auth_info_baileys/"
           add_ignore "**/creds.json"
           add_ignore "*.db"
@@ -228,7 +214,6 @@ jobs:
           save_changes() {
             echo "Checking ARTHUR repository changes..."
 
-            # إبقاء بحد أقصى 150 ملفاً في مجلد الاتصال مع الحفاظ على creds.json وملفات session الأساسية
             if [ -d "ملف_الاتصال" ]; then
               TOTAL_FILES=$(find "ملف_الاتصال" -maxdepth 1 -type f | wc -l)
               if [ "$TOTAL_FILES" -gt 150 ]; then
@@ -248,56 +233,51 @@ jobs:
               session \
               sessions \
               "ملف_الاتصال" \
-              database \
               auth_info_baileys 2>/dev/null || true
 
             git rm --cached --ignore-unmatch .env .env.* "**/creds.json" "**/*.pem" "**/*.key" 2>/dev/null || true
 
-            git add --ignore-errors -A -- . \
-              ':(exclude)node_modules/**' \
+            git add -A -- . \
+              ':(exclude).gitignore' \
               ':(exclude)**/node_modules/**' \
-              ':(exclude)ArthurSession/**' \
               ':(exclude)**/ArthurSession/**' \
-              ':(exclude)ArthurSubBot/**' \
               ':(exclude)**/ArthurSubBot/**' \
-              ':(exclude)BackupSession/**' \
               ':(exclude)**/BackupSession/**' \
-              ':(exclude)session/**' \
               ':(exclude)**/session/**' \
-              ':(exclude)sessions/**' \
               ':(exclude)**/sessions/**' \
               ':(exclude)ملف_الاتصال/**' \
               ':(exclude)**/ملف_الاتصال/**' \
-              ':(exclude)database/**' \
-              ':(exclude)**/database/**' \
-              ':(exclude)auth_info_baileys/**' \
               ':(exclude)**/auth_info_baileys/**' \
               ':(exclude)**/creds.json' \
-              ':(exclude)temp/**' \
-              ':(exclude)tmp/**'
+              ':(exclude)**/*.db' \
+              ':(exclude)**/*.db.*' \
+              ':(exclude)**/*.pem' \
+              ':(exclude)**/*.key' \
+              ':(exclude)**/*.p12' \
+              ':(exclude)**/*.pfx' \
+              ':(exclude)**/*.log' \
+              ':(exclude)**/temp/**' \
+              ':(exclude)**/tmp/**' || return 1
 
-            if git diff --cached --quiet; then
+            if ! git diff --cached --quiet; then
+              git commit -m "Auto-save ARTHUR repository progress" || return 1
+            else
               echo "No new changes to commit."
               return 0
             fi
 
-            echo "Changes detected:"
-            git diff --cached --name-status
+            git fetch origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
 
-            git commit -m "Auto-save ARTHUR repository progress" || return 1
-
-            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
-
-            if [ "$(git rev-list --count "origin/${BRANCH_NAME}..HEAD")" -gt 0 ]; then
-              if ! git push origin "HEAD:${BRANCH_NAME}"; then
-                echo "Push failed. Synchronizing..."
-                git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
-                git -c rebase.autoStash=true rebase "origin/${BRANCH_NAME}" || {
+            if [ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]; then
+              if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+                echo "Push failed. Trying to synchronize..."
+                git fetch origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || return 1
+                git -c rebase.autoStash=true rebase "origin/${GITHUB_REF_NAME}" || {
                   git rebase --abort || true
                   echo "Rebase conflict. Save failed."
                   return 1
                 }
-                git push origin "HEAD:${BRANCH_NAME}" || return 1
+                git push origin "HEAD:${GITHUB_REF_NAME}" || return 1
               fi
               echo "Repository changes saved successfully."
             else
@@ -306,7 +286,11 @@ jobs:
           }
 
           cleanup_and_exit() {
-            echo "Shutting down runner. Attempting final save..."
+            echo "Stopping ARTHUR BOT..."
+            if [ -n "${BOT_PID:-}" ]; then
+              kill -TERM "$BOT_PID" 2>/dev/null || true
+              wait "$BOT_PID" 2>/dev/null || true
+            fi
             save_changes || echo "Final save failed."
             exit "${1:-0}"
           }
@@ -325,14 +309,14 @@ jobs:
               NOW=$(date +%s)
               if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
                 if kill -0 "$BOT_PID" 2>/dev/null; then
-                  save_changes || echo "Auto-save failed; will retry later."
+                  save_changes || echo "Auto-save failed; retrying later."
                 fi
                 LAST_SAVE=$(date +%s)
               fi
             done
             wait "$BOT_PID"
             BOT_STATUS=$?
-            echo "Bot exited with status $BOT_STATUS. Saving progress and restarting immediately..."
+            echo "Runner exited with status: $BOT_STATUS"
             save_changes || echo "Save after exit failed."
             sleep 2
           done
