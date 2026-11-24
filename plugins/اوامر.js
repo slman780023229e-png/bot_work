@@ -1,309 +1,434 @@
 // plugins/اوامر.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - القائمة الرئيسية ✧
+// ✧ ARTHUR BOT - قائمة الأقسام والأوامر التلقائية ✧
 
 import fs from 'fs'
 import path from 'path'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import {
     prepareWAMessageMedia,
     generateWAMessageFromContent,
     proto
 } from '@whiskeysockets/baileys'
-
 import fetch from 'node-fetch'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
-const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX' // <-- حط رابط قناتك هنا
-
-// ✅ الرابط الجديد
+const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
 const imageUrl = 'https://n.uguu.se/xhgiNqAmQfvh.jpg'
 
-// ✅ القائمة الثابتة حقك - اذا القراءة التلقائية فشلت، هذي تشتغل
-const FIXED_ROWS = [
-    { header: '👑', title: 'الجروبات والمشرفين', description: 'إدارة وحماية الجروبات', id: '.ق1' },
-    { header: '📥', title: 'التحميلات', description: 'تحميل الفيديوهات والصور والملفات', id: '.ق2' },
-    { header: '🎭', title: 'الترفيه والتسلية', description: 'أوامر المرح والتفاعل', id: '.ق3' },
-    { header: '🎮', title: 'الألعاب', description: 'ألعاب وتحديات', id: '.ق4' },
-    { header: '👑', title: 'النقابات', description: 'أوامر النقابات وإدارة النقابة', id: '.ق5' },
-    { header: '🛠️', title: 'الأدوات', description: 'أدوات ومميزات البوت', id: '.ق6' },
-    { header: '🎬', title: 'الإيديت والأغاني', description: 'الإيديت والموسيقى والأغاني', id: '.ق7' },
+const CACHE_TTL = 30_000
+let cachedMenu = null
+let cachedAt = 0
+
+const normalize = (value = '') => String(value)
+    .trim()
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+
+const CATEGORY_ALIASES = {
+    group: 'إدارة المجموعات',
+    groups: 'إدارة المجموعات',
+    admin: 'إدارة المجموعات',
+    administration: 'إدارة المجموعات',
+    moderation: 'إدارة المجموعات',
+    downloader: 'التحميلات',
+    download: 'التحميلات',
+    games: 'الألعاب',
+    game: 'الألعاب',
+    fun: 'الترفيه',
+    entertainment: 'الترفيه',
+    unions: 'النقابات',
+    guild: 'النقابات',
+    tools: 'الأدوات',
+    tool: 'الأدوات',
+    sticker: 'الأدوات',
+    ai: 'الذكاء الاصطناعي',
+    owner: 'المطور',
+    dev: 'المطور',
+    main: 'النظام',
+    system: 'النظام',
+    music: 'الموسيقى',
+    islamic: 'الإسلامي',
+    community: 'المجتمع'
+}
+
+const CATEGORY_ORDER = [
+    'إدارة المجموعات',
+    'التحميلات',
+    'الألعاب',
+    'الترفيه',
+    'النقابات',
+    'الأدوات',
+    'الذكاء الاصطناعي',
+    'الموسيقى',
+    'الإسلامي',
+    'المجتمع',
+    'المطور',
+    'النظام',
+    'أخرى'
 ]
 
-const Q_NAMES = {
-    'ق1': { title: 'الجروبات والمشرفين', desc: 'إدارة وحماية الجروبات', icon: '👑' },
-    'ق2': { title: 'التحميلات', desc: 'تحميل الفيديوهات والصور والملفات', icon: '📥' },
-    'ق3': { title: 'الترفيه والتسلية', desc: 'أوامر المرح والتفاعل', icon: '🎭' },
-    'ق4': { title: 'الألعاب', desc: 'ألعاب وتحديات', icon: '🎮' },
-    'ق5': { title: 'النقابات', desc: 'أوامر النقابات وإدارة النقابة', icon: '👑' },
-    'ق6': { title: 'الأدوات', desc: 'أدوات ومميزات البوت', icon: '🛠️' },
-    'ق7': { title: 'الإيديت والأغاني', desc: 'الإيديت والموسيقى والأغاني', icon: '🎬' },
-    'ق8': { title: 'القسم الثامن', desc: 'أقسام وأوامر البوت', icon: '📂' },
-    'ق9': { title: 'القسم التاسع', desc: 'أقسام وأوامر البوت', icon: '📂' },
-    'ق10': { title: 'القسم العاشر', desc: 'أقسام وأوامر البوت', icon: '📂' },
+const getCategory = (plugin) => {
+    const raw = plugin?.category ??
+        (Array.isArray(plugin?.tags) ? plugin.tags[0] : plugin?.tags) ??
+        'أخرى'
+    const value = String(raw || 'أخرى').trim()
+    return CATEGORY_ALIASES[normalize(value)] || value
 }
 
-const normalize = (s) => String(s || '').trim().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').toLowerCase()
-const cleanCat = (name) => {
-    let n = normalize(name)
-    if (/^(مطور|المطور|dev)$/.test(n)) return 'المطور'
-    if (/^(الادوات|ادوات|tools?)$/.test(n)) return 'الأدوات'
-    if (/^(النخبه|نخبه|النخب|elite)$/.test(n)) return 'النخبة'
-    if (/^(الادار|اداره|ادارة|admin|الجروبات|المشرفين)$/.test(n)) return 'الجروبات والمشرفين'
-    if (/^(التحميل|تحميل|التحميلات|download)$/.test(n)) return 'التحميلات'
-    if (/^(اسلامي|دين|الدين|islamic)$/.test(n)) return 'الإسلامي'
-    if (/^(حماية|الحماية|security)$/.test(n)) return 'الحماية'
-    if (/^(الاعضاء|اعضاء|members?)$/.test(n)) return 'الأعضاء'
-    if (/^(الالعاب|العاب|games?)$/.test(n)) return 'الألعاب'
-    if (/^(الترفيه|ترفيه|تسلية|fun)$/.test(n)) return 'الترفيه والتسلية'
-    if (/^(النقابات|نقابات|guild)$/.test(n)) return 'النقابات'
-    return String(name).trim()
-}
-const getIcon = (name) => {
-    let n = normalize(name)
-    if (n.includes('جروبات') || n.includes('مشرفين') || n.includes('مطور')) return '👑'
-    if (n.includes('ادوات')) return '🛠️'
-    if (n.includes('تحميل')) return '📥'
-    if (n.includes('نخب')) return '👑'
-    if (n.includes('دين') || n.includes('اسلامي')) return '🕌'
-    if (n.includes('حماي')) return '🛡️'
-    if (n.includes('اعضاء')) return '👥'
-    if (n.includes('العاب')) return '🎮'
-    if (n.includes('ترفيه') || n.includes('تسلية')) return '🎭'
-    if (n.includes('نقابات')) return '👑'
-    if (n.includes('ايديت') || n.includes('اغاني')) return '🎬'
+const getIcon = (category) => {
+    const key = normalize(category)
+    if (key.includes('مجموع') || key.includes('ادار') || key.includes('حماي')) return '🛡️'
+    if (key.includes('تحميل')) return '📥'
+    if (key.includes('العاب')) return '🎮'
+    if (key.includes('ترفيه')) return '🎭'
+    if (key.includes('نقاب')) return '👑'
+    if (key.includes('ادوات')) return '🛠️'
+    if (key.includes('ذكاء')) return '🤖'
+    if (key.includes('موسيقى')) return '🎵'
+    if (key.includes('اسلام')) return '🕌'
+    if (key.includes('مجتمع')) return '🌐'
+    if (key.includes('مطور')) return '👑'
+    if (key.includes('نظام')) return '⭐'
     return '📂'
 }
 
-// ✅ الحالة 1: قراءة ق1 .. ق10 تلقائي من الملفات
-function getQSections() {
-    let files = []
-    try { files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js')) } catch { return [] }
-    let sections = []
-    for (let file of files) {
-        if (file === 'اوامر.js') continue
-        let content = ''
-        try { content = fs.readFileSync(path.join(__dirname, file), 'utf-8') } catch { continue }
-        let matches = content.match(/ق\s*\d+/g)
-        if (!matches) continue
-        for (let m of matches) {
-            let key = m.replace(/\s+/g, '')
-            if (!/^ق\d+$/.test(key)) continue
-            if (sections.find(s => s.key === key)) continue
-            let info = Q_NAMES[key] || { title: `قسم ${key}`, desc: 'أقسام وأوامر البوت', icon: '📂' }
-            sections.push({ header: info.icon, title: info.title, description: info.desc, id: `.${key}`, key, type: 'q' })
-            break
+const getCategoryDescription = (category) => {
+    const key = normalize(category)
+    if (key.includes('مجموع')) return 'إدارة المجموعات وحمايتها'
+    if (key.includes('تحميل')) return 'تحميل الصور والفيديوهات والملفات'
+    if (key.includes('العاب')) return 'ألعاب وتحديات ومسابقات'
+    if (key.includes('ترفيه')) return 'أوامر المرح والتفاعل'
+    if (key.includes('نقاب')) return 'إدارة الألقاب والنقابات'
+    if (key.includes('ادوات')) return 'أدوات ومميزات البوت'
+    if (key.includes('ذكاء')) return 'أدوات الذكاء الاصطناعي'
+    if (key.includes('موسيقى')) return 'الأغاني والصوتيات'
+    if (key.includes('اسلام')) return 'أوامر وخدمات إسلامية'
+    if (key.includes('مطور')) return 'أوامر المطور والإدارة'
+    if (key.includes('نظام')) return 'معلومات وخدمات النظام'
+    if (key.includes('مجتمع')) return 'روابط ومجتمع البوت'
+    return 'الأوامر المتاحة في هذا القسم'
+}
+
+const scanPluginFiles = (directory, result = []) => {
+    let entries = []
+    try {
+        entries = fs.readdirSync(directory, { withFileTypes: true })
+    } catch {
+        return result
+    }
+
+    for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+        const fullPath = path.join(directory, entry.name)
+
+        if (entry.isDirectory()) {
+            scanPluginFiles(fullPath, result)
+        } else if (
+            entry.isFile() &&
+            entry.name.endsWith('.js') &&
+            entry.name !== 'اوامر.js' &&
+            !/^ق\s*\d+\.js$/i.test(entry.name)
+        ) {
+            result.push(fullPath)
         }
     }
-    sections.sort((a, b) => parseInt(a.key.replace('ق', '')) - parseInt(b.key.replace('ق', '')))
-    return sections
+
+    return result
 }
 
-// ✅ الحالة 2: قراءة اقسام tags تلقائي من الملفات
-async function getTagSections() {
-    let files = []
-    try { files = fs.readdirSync(__dirname).filter(f => f.endsWith('.js')) } catch { return [] }
-    let grouped = {}
-    for (let file of files) {
-        if (file === 'اوامر.js') continue
-        let content = ''
-        try { content = fs.readFileSync(path.join(__dirname, file), 'utf-8') } catch { continue }
-        if (file.match(/^ق\d+\.js$/) || content.match(/handler\.command\s*=\s*\/\^?\(?ق\d+/)) continue
-        try {
-            const mod = await import(`./${file}?t=${Date.now()}`)
-            const p = mod?.default
-            if (!p || typeof p !== 'object') continue
-            let rawCat = p.category || (Array.isArray(p.tags) ? p.tags[0] : p.tags) || 'أخرى'
-            let cat = cleanCat(rawCat)
-            if (!grouped[cat]) grouped[cat] = []
-            let list = []
-            if (Array.isArray(p.command)) list = p.command
-            else if (p.command instanceof RegExp) {
-                list = p.command.source.replace(/[\^\$\(\)\?\.\*\+\|\\\/\[\]]/g, ' ').split(/\s+/).filter(s => s.length > 1)
-            } else if (typeof p.command === 'string') list = [p.command]
-            for (let c of list) {
-                c = String(c).trim().replace(/[\^\$\(\)\?\|\\\/\[\]]/g, '').replace(/^\^/, '').trim()
-                if (!c || c.length < 2) continue
-                if (/^ق\d+$/.test(c)) continue
-                if (!grouped[cat].includes(c)) grouped[cat].push(c)
-            }
-        } catch {}
-    }
-    for (let k in grouped) if (!grouped[k].length) delete grouped[k]
-    let qTitles = new Set(getQSections().map(s => normalize(s.title)))
-    let out = []
-    for (let cat of Object.keys(grouped)) {
-        if (qTitles.has(normalize(cat))) continue
-        out.push({ header: getIcon(cat), title: cat, description: `${grouped[cat].length} أمر`, id: `.قسم ${cat}`, type: 'tag', cmds: grouped[cat] })
-    }
-    out.sort((a, b) => a.title.localeCompare(b.title, 'ar'))
-    return out
-}
+const cleanCommand = (value) => String(value ?? '')
+    .trim()
+    .replace(/^[.!/#]+/, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim()
 
-// ✅ دمج الحالتين: ق + tags
-async function getAllRows() {
-    try {
-        let q = getQSections()
-        let tags = await getTagSections()
-        let all = [...q, ...tags]
-        if (!all.length) return FIXED_ROWS
-        return all
-    } catch {
-        return FIXED_ROWS
-    }
-}
+const commandsFromPattern = (pattern) => {
+    if (!(pattern instanceof RegExp)) return []
+    let source = pattern.source
+    if (!source || source === '(?:)') return []
 
-// ✅ عرض قسم tags لما يضغط عليه
-async function showTagSection(conn, m, catName, usedPrefix) {
-    let qSections = getQSections()
-    let qMatch = qSections.find(s =>
-        normalize(s.title) === normalize(catName) ||
-        normalize(catName).includes(normalize(s.title)) ||
-        normalize(s.title).includes(normalize(catName))
-    )
-    // اذا طلع قسم ق، نرجع isQ عشان القالب يحوله لأمر ق
-    if (qMatch) return { isQ: true, key: qMatch.key }
+    source = source.replace(/^\^/, '').replace(/\$$/, '')
+    source = source.replace(/^\(\?:/, '').replace(/\)$/, '')
+    source = source.replace(/\\d\+/g, ' رقم')
+    source = source.replace(/\\s\*/g, ' ')
+    source = source.replace(/\\-/g, '-')
 
-    let tagSections = await getTagSections()
-    let found = tagSections.find(s => normalize(s.title) === normalize(catName))
-    if (!found) found = tagSections.find(s => normalize(s.title).includes(normalize(catName)) || normalize(catName).includes(normalize(s.title)))
-    if (!found) {
-        return conn.sendMessage(m.chat, { text: `❌ ما لقيت قسم ${catName}\nاكتب .اوامر وشوف الأقسام المتوفرة` }, { quoted: m })
-    }
-    let text = `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n  ${found.header} قسم: ${found.title}\n  📦 عدد الأوامر: ${found.cmds.length}\n\n`
-    for (let c of found.cmds) text += `  • ${usedPrefix || '.'}${c}\n`
-    text += `\n*◇❐ ═━╾⚡ ╼━═ ❐◇*\n  اكتب ${usedPrefix || '.'}اوامر للرجوع\n  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
-    await conn.sendMessage(m.chat, { text }, { quoted: m })
-    return { isQ: false }
-}
-
-// ✅ تحويل الضغطة لأمر - يشتغل في الحالتين
-function convertClick(m) {
-    let selectedId = ''
-    if (m.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
-        selectedId = m.message.listResponseMessage.singleSelectReply.selectedRowId
-    } else if (m.message?.interactiveResponseMessage?.body?.text) {
-        selectedId = m.message.interactiveResponseMessage.body.text
-    } else if (m.message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson) {
-        try {
-            let p = JSON.parse(m.message.interactiveResponseMessage.nativeFlowResponseMessage.paramsJson)
-            selectedId = p.id || ''
-        } catch {}
-    } else if (m.message?.viewOnceMessage?.message?.interactiveResponseMessage?.body?.text) {
-        selectedId = m.message.viewOnceMessage.message.interactiveResponseMessage.body.text
-    } else if (m.message?.viewOnceMessageV2?.message?.interactiveResponseMessage?.body?.text) {
-        selectedId = m.message.viewOnceMessageV2.message.interactiveResponseMessage.body.text
-    } else if (m.message?.viewOnceMessage?.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
-        selectedId = m.message.viewOnceMessage.message.listResponseMessage.singleSelectReply.selectedRowId
-    } else if (m.message?.viewOnceMessageV2?.message?.listResponseMessage?.singleSelectReply?.selectedRowId) {
-        selectedId = m.message.viewOnceMessageV2.message.listResponseMessage.singleSelectReply.selectedRowId
-    }
-    if (!selectedId) return null
-    selectedId = String(selectedId).trim()
-    if (!selectedId) return null
-
-    // الحالة 1: ضغطة .ق1 .. .ق10
-    if (/^\.?ق\s*\d+$/.test(selectedId)) {
-        let cmd = selectedId.replace(/\s+/g, '')
-        if (!cmd.startsWith('.')) cmd = '.' + cmd
-        return cmd
-    }
-    // الحالة 2: ضغطة .قسم xxx
-    if (/^\.?قسم\s+/i.test(selectedId)) {
-        return selectedId.startsWith('.') ? selectedId : '.' + selectedId
-    }
-    // ضغطة اسم بس مثل "الإيديت والأغاني" او "الإسلامي"
-    if (!selectedId.startsWith('.') && selectedId.length < 40 && !selectedId.includes('http')) {
-        let qSections = getQSections()
-        let qMatch = qSections.find(s =>
-            normalize(s.title) === normalize(selectedId) ||
-            normalize(s.title).includes(normalize(selectedId)) ||
-            normalize(selectedId).includes(normalize(s.title))
+    return source.split('|')
+        .map(part => part
+            .replace(/\\([A-Za-zء-ي])/g, '$1')
+            .replace(/[()[\]{}?*+.$^]/g, '')
+            .replace(/\\/g, '')
+            .trim())
+        .filter(part =>
+            part.length > 1 &&
+            /^[\p{L}\p{N}_\- ]+$/u.test(part) &&
+            !/^(?:s|d|w|b|i|g)$/i.test(part)
         )
-        if (qMatch) return `.${qMatch.key}`
-        return `.قسم ${selectedId}`
+}
+
+const getPluginCommands = (plugin, fileName) => {
+    let candidates = []
+
+    if (Array.isArray(plugin?.help)) {
+        candidates.push(...plugin.help)
     }
-    return null
+
+    const raw = plugin?.command
+    if (Array.isArray(raw)) {
+        candidates.push(...raw)
+    } else if (typeof raw === 'string') {
+        candidates.push(raw)
+    } else if (raw instanceof RegExp) {
+        candidates.push(...commandsFromPattern(raw))
+    }
+
+    // بعض الإضافات تعتمد customPrefix بدل command.
+    if (!candidates.length && plugin?.customPrefix instanceof RegExp) {
+        candidates.push(...commandsFromPattern(plugin.customPrefix))
+    }
+
+    const output = []
+    const seen = new Set()
+
+    for (const item of candidates) {
+        const command = cleanCommand(item)
+        if (!command || command.length > 45) continue
+        if (/^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
+        const key = normalize(command)
+        if (seen.has(key)) continue
+        seen.add(key)
+        output.push(command)
+    }
+
+    // لا نعرض اسم الملف كأمر إلا إذا كان الملف يصدّر معالجًا صالحًا.
+    if (!output.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
+        const fallback = cleanCommand(path.basename(fileName, '.js'))
+        if (fallback && !/^ق\s*\d+$/i.test(fallback)) output.push(fallback)
+    }
+
+    return output
+}
+
+const getMenuData = async (force = false) => {
+    const now = Date.now()
+    if (!force && cachedMenu && now - cachedAt < CACHE_TTL) return cachedMenu
+
+    const files = scanPluginFiles(__dirname)
+    const categories = new Map()
+
+    for (const fullPath of files) {
+        try {
+            const stat = fs.statSync(fullPath)
+            const moduleUrl = `${pathToFileURL(fullPath).href}?menu=${stat.mtimeMs}`
+            const imported = await import(moduleUrl)
+            const plugin = imported?.default
+
+            // ملفات الأحداث التي لا تصدّر أمرًا لا تدخل في القائمة.
+            if (!plugin || !['object', 'function'].includes(typeof plugin)) continue
+            if (!plugin.command && !plugin.customPrefix) continue
+
+            const category = getCategory(plugin)
+            const commands = getPluginCommands(plugin, fullPath)
+            if (!commands.length) continue
+
+            if (!categories.has(category)) categories.set(category, new Map())
+            const bucket = categories.get(category)
+
+            for (const command of commands) {
+                const key = normalize(command)
+                if (!bucket.has(key)) {
+                    bucket.set(key, {
+                        command,
+                        description: plugin.description || plugin.desc || 'أمر من أوامر البوت'
+                    })
+                }
+            }
+        } catch (error) {
+            console.error(`[ARTHUR MENU] تعذر قراءة ${path.basename(fullPath)}:`, error.message)
+        }
+    }
+
+    const orderedCategories = [...categories.keys()].sort((a, b) => {
+        const ai = CATEGORY_ORDER.indexOf(a)
+        const bi = CATEGORY_ORDER.indexOf(b)
+        if (ai !== -1 || bi !== -1) {
+            if (ai === -1) return 1
+            if (bi === -1) return -1
+            return ai - bi
+        }
+        return a.localeCompare(b, 'ar')
+    })
+
+    const result = {
+        categories: orderedCategories.map(name => ({
+            name,
+            icon: getIcon(name),
+            description: getCategoryDescription(name),
+            commands: [...categories.get(name).values()]
+                .sort((a, b) => a.command.localeCompare(b.command, 'ar'))
+        })),
+        totalCommands: orderedCategories.reduce(
+            (sum, name) => sum + categories.get(name).size, 0
+        )
+    }
+
+    cachedMenu = result
+    cachedAt = now
+    return result
+}
+
+const unwrapMessage = (message, depth = 0) => {
+    if (!message || depth > 5) return null
+    if (message.interactiveResponseMessage || message.listResponseMessage) return message
+
+    const wrappers = [
+        'ephemeralMessage',
+        'viewOnceMessage',
+        'viewOnceMessageV2',
+        'documentWithCaptionMessage'
+    ]
+
+    for (const key of wrappers) {
+        if (message[key]?.message) {
+            const found = unwrapMessage(message[key].message, depth + 1)
+            if (found) return found
+        }
+    }
+    return message
+}
+
+const getSelectedId = (m) => {
+    const message = unwrapMessage(m?.message)
+    const rowId = message?.listResponseMessage?.singleSelectReply?.selectedRowId
+    if (rowId) return String(rowId).trim()
+
+    const paramsJson =
+        message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
+
+    if (paramsJson) {
+        try {
+            const params = JSON.parse(paramsJson)
+            const selected = params.id ||
+                params.row_id ||
+                params.selectedRowId ||
+                params.selected_row_id
+            if (selected) return String(selected).trim()
+        } catch {}
+    }
+
+    const bodyText = message?.interactiveResponseMessage?.body?.text
+    return bodyText ? String(bodyText).trim() : ''
+}
+
+const findCategory = (menu, name) => {
+    const wanted = normalize(name)
+    return menu.categories.find(item => normalize(item.name) === wanted)
+}
+
+const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
+    const menu = await getMenuData()
+    const category = findCategory(menu, categoryName)
+
+    if (!category) {
+        return conn.sendMessage(m.chat, {
+            text: `❌ القسم "${categoryName}" غير موجود.\nاكتب ${usedPrefix}اوامر لعرض الأقسام المتاحة.`
+        }, { quoted: m })
+    }
+
+    let body = `*${category.icon} [ ${category.name} ]*\n`
+    body += `_${category.description}_\n\n`
+
+    for (const item of category.commands) {
+        body += `❖ ${usedPrefix}${item.command}\n`
+        if (item.description && item.description !== 'أمر من أوامر البوت') {
+            body += `└ 🏷️ _${item.description}_\n`
+        }
+        body += '\n'
+    }
+
+    body += `💡 *إجمالي أوامر القسم:* ${category.commands.length}`
+    return conn.sendMessage(m.chat, { text: body }, { quoted: m })
 }
 
 const handler = async (m, { conn, usedPrefix }) => {
-
     try {
+        const prefix = usedPrefix || '.'
+        const fullText = String(m.text || m.body || '').trim()
+        const sectionMatch = fullText.match(/^(?:[.!/#])?قسم(?:\s+|$)(.*)$/i)
 
-        // اذا كتب .قسم xxx
-        let full = (m.text || m.body || '').trim()
-        if (/^\.?قسم\s+/i.test(full)) {
-            let cat = full.replace(/^\.?قسم\s*/i, '').trim()
-            if (!cat) {
-                // اذا كتب .قسم لحاله، نعرض القائمة
-            } else {
-                let res = await showTagSection(conn, m, cat, usedPrefix || '.')
-                if (res?.isQ) return // القالب بيحولها لأمر ق
-                return
-            }
+        if (sectionMatch && sectionMatch[1]?.trim()) {
+            return await showCategory(conn, m, sectionMatch[1].trim(), prefix)
         }
 
-        // ⚡ تفاعل برق
-        try { await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } }) } catch {}
+        try {
+            await conn.sendMessage(m.chat, {
+                react: { text: '⚡', key: m.key }
+            })
+        } catch {}
 
-        const user = await conn.getName(m.sender)
+        let user = 'صديقي'
+        try {
+            user = await conn.getName(m.sender) || 'صديقي'
+        } catch {}
+        const menu = await getMenuData()
 
-        // ✅ الصورة + القائمة مع بعض - اذا الصورة فشلت نرسل القائمة بدون صورة، ما نسكت
+        if (!menu.categories.length) {
+            return conn.sendMessage(m.chat, {
+                text: '❌ لم أتمكن من العثور على أقسام. تأكد من وجود command و tags في ملفات الإضافات.'
+            }, { quoted: m })
+        }
+
         let media = null
         try {
-            const imageRes = await fetch(imageUrl)
-            if (imageRes.ok) {
-                const imageBuffer = Buffer.from(await imageRes.arrayBuffer())
-                media = await prepareWAMessageMedia({ image: imageBuffer }, { upload: conn.waUploadToServer })
+            const response = await fetch(imageUrl)
+            if (response.ok) {
+                const buffer = Buffer.from(await response.arrayBuffer())
+                media = await prepareWAMessageMedia(
+                    { image: buffer },
+                    { upload: conn.waUploadToServer }
+                )
             }
-        } catch (e) {
-            console.log('[اوامر] الصورة فشلت، بنكمل بدونها:', e.message)
+        } catch (error) {
+            console.log('[اوامر] تعذر تحميل صورة القائمة:', error.message)
         }
 
-        const text =
+        const bodyText =
 `*◇❐ ═━╾⚡ ╼━═ ❐◇*
 
-*◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  ⚡ أهلاً بك يا ${user}
+⚡ أهلاً بك يا ${user}
 
-*◇❐ ═━╾⚡ ╼━═ ❐◇*
+📂 الأقسام: *${menu.categories.length}*
+⚔️ الأوامر: *${menu.totalCommands}*
 
-*◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  ✦ الفخامة لها عنوان واحد
-  ✦ القوة .. السرعة .. الهيبة
-  ✦ اختر .. واستمتع
+✦ القوة .. السرعة .. الهيبة
+✦ اختر القسم لعرض أوامره
 
-*◇❐ ═━╾⚡ ╼━═ ❐◇*
+*𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓*`
 
-*◇❐ ═━╾ ⚡ ╼━═ ❐◇*
-  𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
+        const rows = menu.categories.map(category => ({
+            header: category.icon,
+            title: `⟨ ${category.name} ⟩`.slice(0, 24),
+            description: `${category.description} | ${category.commands.length} أمر`.slice(0, 72),
+            id: `.قسم ${category.name}`
+        }))
 
-        // ✅ الصفوف تلقائية: ق + tags، اذا فشلت نرجع للثابتة حقك
-        let allRows = await getAllRows()
-        // واتساب يقبل 10 صفوف بس في القسم الواحد، نقسمها لقسمين اذا زادت
-        let sections = []
-        if (allRows.length <= 10) {
-            sections = [{ title: '╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮', rows: allRows.map(r => ({ header: r.header, title: String(r.title).slice(0, 24), description: String(r.description).slice(0, 72), id: r.id })) }]
-        } else {
-            let qRows = allRows.filter(r => r.type === 'q' || FIXED_ROWS.find(f => f.id === r.id))
-            let tagRows = allRows.filter(r => r.type === 'tag')
-            if (qRows.length) sections.push({ title: '╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮', rows: qRows.slice(0, 10).map(r => ({ header: r.header, title: String(r.title).slice(0, 24), description: String(r.description).slice(0, 72), id: r.id })) })
-            if (tagRows.length) sections.push({ title: '╭━━━〔 أقسام تلقائية 〕━━━╮', rows: tagRows.slice(0, 10).map(r => ({ header: r.header, title: String(r.title).slice(0, 24), description: String(r.description).slice(0, 72), id: r.id })) })
-            if (!sections.length) sections = [{ title: '╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮', rows: FIXED_ROWS }]
+        // واتساب يسمح بحد أقصى 10 صفوف في كل مجموعة.
+        const sections = []
+        for (let i = 0; i < rows.length; i += 10) {
+            sections.push({
+                title: i === 0 ? '📂 أقسام ARTHUR BOT' : `📂 أقسام إضافية ${Math.floor(i / 10) + 1}`,
+                rows: rows.slice(i, i + 10)
+            })
         }
 
         const interactiveMessage = {
-
-            body: {
-                text: text
-            },
-
-            footer: {
-                text: '✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦'
-            },
-
+            body: { text: bodyText },
+            footer: { text: '✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦' },
             header: media?.imageMessage ? {
                 title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓',
                 hasMediaAttachment: true,
@@ -312,149 +437,79 @@ const handler = async (m, { conn, usedPrefix }) => {
                 title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓',
                 hasMediaAttachment: false
             },
-
             nativeFlowMessage: {
-
                 buttons: [
-
                     {
                         name: 'single_select',
-
-                        buttonParamsJson:
-                            JSON.stringify({
-
-                                title: '📂 قائمة الأوامر',
-
-                                sections: sections
-
-                            })
+                        buttonParamsJson: JSON.stringify({
+                            title: '📂 قائمة الأقسام',
+                            sections
+                        })
                     },
-
                     {
                         name: 'cta_url',
-
-                        buttonParamsJson:
-                            JSON.stringify({
-
-                                display_text:
-                                    '👑 المطور',
-
-                                url:
-                                    `https://wa.me/${ownerNumber}`,
-
-                                merchant_url:
-                                    `https://wa.me/${ownerNumber}`
-
-                            })
+                        buttonParamsJson: JSON.stringify({
+                            display_text: '👑 المطور',
+                            url: `https://wa.me/${ownerNumber}`,
+                            merchant_url: `https://wa.me/${ownerNumber}`
+                        })
                     },
-
                     {
                         name: 'cta_url',
-
-                        buttonParamsJson:
-                            JSON.stringify({
-
-                                display_text:
-                                    '📢 القناة',
-
-                                url:
-                                    channelUrl,
-
-                                merchant_url:
-                                    channelUrl
-
-                            })
+                        buttonParamsJson: JSON.stringify({
+                            display_text: '📢 القناة',
+                            url: channelUrl,
+                            merchant_url: channelUrl
+                        })
                     },
-
                     {
                         name: 'quick_reply',
-
-                        buttonParamsJson:
-                            JSON.stringify({
-
-                                display_text:
-                                    '🤖 تنصيب البوت',
-
-                                id:
-                                    '.تنصيب'
-
-                            })
+                        buttonParamsJson: JSON.stringify({
+                            display_text: '🤖 تنصيب البوت',
+                            id: '.تنصيب'
+                        })
                     }
-
                 ],
-
                 messageParamsJson: ''
             }
         }
 
-        const msg =
-            generateWAMessageFromContent(
-                m.chat,
-
-                {
-                    viewOnceMessage: {
-                        message: {
-                            interactiveMessage:
-                                proto.Message.InteractiveMessage
-                                    .fromObject(
-                                        interactiveMessage
-                                    )
-                        }
-                    }
-                },
-
-                {
-                    userJid: conn.user.jid,
-                    quoted: m
-                }
-            )
-
-        await conn.relayMessage(
+        const outgoing = generateWAMessageFromContent(
             m.chat,
-            msg.message,
             {
-                messageId: msg.key.id
+                viewOnceMessage: {
+                    message: {
+                        interactiveMessage: proto.Message.InteractiveMessage.fromObject(interactiveMessage)
+                    }
+                }
+            },
+            {
+                userJid: conn.user.jid,
+                quoted: m
             }
         )
 
-    } catch (e) {
-
-        console.error(
-            '❌ ARTHUR BOT MENU ERROR:',
-            e
-        )
-
-        await m.reply(
-            '❌ حصل خطأ أثناء فتح قائمة 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓.'
-        )
+        return await conn.relayMessage(m.chat, outgoing.message, {
+            messageId: outgoing.key.id
+        })
+    } catch (error) {
+        console.error('❌ ARTHUR BOT MENU ERROR:', error)
+        return m.reply('❌ حصل خطأ أثناء فتح قائمة ARTHUR BOT.')
     }
 }
 
-// ✅ الضغطة تشتغل في الحالتين - في before و all معاً، اذا واحد ما اشتغل الثاني يلحقه
-handler.before = async (m, { conn }) => {
-    let cmd = convertClick(m)
-    if (cmd) {
-        m.text = cmd
-        m.body = cmd
-        if (m.msg) m.msg.text = cmd
-    }
-}
-handler.all = async (m, { conn }) => {
-    if (!m.text && !m.body) {
-        let cmd = convertClick(m)
-        if (cmd) {
-            m.text = cmd
-            m.body = cmd
-            if (m.msg) m.msg.text = cmd
-        }
+handler.before = async (m) => {
+    const selected = getSelectedId(m)
+    if (!selected) return
+
+    if (/^(?:\.|!|\/|#)?قسم\s+/i.test(selected)) {
+        m.text = selected
+        m.body = selected
     }
 }
 
 handler.help = ['اوامر', 'قسم']
-
 handler.tags = ['main']
-
-handler.command =
-    /^(اوامر|قسم)$/i
+handler.command = /^(اوامر|قسم)$/i
 
 export default handler
