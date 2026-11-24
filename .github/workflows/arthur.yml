@@ -34,7 +34,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Clean Stale Session Keys Older Than 4 Hours
+      - name: Trim Session Keys in Upstash Redis to Max 150 Across All Types
         env:
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
@@ -42,6 +42,7 @@ jobs:
           node -e '
             const url = process.env.UPSTASH_REDIS_REST_URL;
             const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+            const MAX_KEEP = 150;
             const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
             const now = Date.now();
 
@@ -57,59 +58,117 @@ jobs:
               return res.json();
             }
 
+            function detectType(key) {
+              const k = String(key).toLowerCase();
+              if (k.includes("creds")) return "creds";
+              if (k.startsWith("session") || k.includes("session-")) return "session";
+              if (k.includes("pre-key") || k.includes("prekey")) return "pre-key";
+              if (k.includes("sender-key") || k.includes("senderkey")) return "sender-key";
+              if (k.includes("app-state") || k.includes("appstate")) return "app-state";
+              const parts = k.split(/[-_:]/);
+              return parts.slice(0, 2).join("-") || "other";
+            }
+
             (async () => {
               if (!url || !token) {
-                console.log("Upstash credentials not set; skipping Redis cleanup.");
+                console.log("Upstash credentials missing; skipping Redis trim.");
                 return;
               }
 
               try {
-                // 1) إذا كان لديك فهرس زمني في Upstash مثل session_timestamps (hash: key -> timestamp_ms)
+                const keysRes = await redis(["KEYS", "*"]);
+                const allKeys = Array.isArray(keysRes.result) ? keysRes.result : [];
+                if (allKeys.length <= MAX_KEEP) {
+                  console.log(`Total keys (${allKeys.length}) within limit (${MAX_KEEP}). No deletion needed.`);
+                  return;
+                }
+
                 const tsMapRes = await redis(["HGETALL", "arthur_session_ts"]);
                 const tsList = Array.isArray(tsMapRes.result) ? tsMapRes.result : [];
-                const expiredKeys = [];
-
+                const tsMap = new Map();
                 for (let i = 0; i < tsList.length; i += 2) {
-                  const key = tsList[i];
-                  const ts = Number(tsList[i + 1] || 0);
-                  if (
-                    key &&
-                    !key.includes("creds") &&
-                    !key.startsWith("session-") &&
-                    ts > 0 &&
-                    (now - ts) >= FOUR_HOURS_MS
-                  ) {
-                    expiredKeys.push(key);
+                  tsMap.set(tsList[i], Number(tsList[i + 1] || 0));
+                }
+
+                // تجميع المفاتيح حسب النوع وترتيبها (الأحدث أولاً، مع تفضيل المفاتيح غير المنتهية زمنياً)
+                const groups = new Map();
+                for (const key of allKeys) {
+                  const type = detectType(key);
+                  if (!groups.has(type)) groups.set(type, []);
+                  const ts = tsMap.get(key) || 0;
+                  const isOld = ts > 0 && (now - ts) >= FOUR_HOURS_MS;
+                  groups.get(type).push({ key, ts, isOld });
+                }
+
+                for (const [, list] of groups.entries()) {
+                  list.sort((a, b) => {
+                    if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
+                    return b.ts - a.ts;
+                  });
+                }
+
+                const keepSet = new Set();
+                let remainingBudget = MAX_KEEP;
+
+                // أولاً: ضمان وجود creds و session الأساسية
+                for (const priorityType of ["creds", "session"]) {
+                  const list = groups.get(priorityType) || [];
+                  const take = Math.min(list.length, remainingBudget, priorityType === "creds" ? 10 : 40);
+                  for (let i = 0; i < take; i++) {
+                    keepSet.add(list[i].key);
+                    remainingBudget--;
                   }
                 }
 
-                // 2) احتياطي: فحص المفاتيح المتكررة المعروفة إذا لم يكن هناك طابع زمني محفوظ
-                if (expiredKeys.length === 0) {
-                  const keysRes = await redis(["KEYS", "*"]);
-                  const allKeys = Array.isArray(keysRes.result) ? keysRes.result : [];
-                  for (const k of allKeys) {
-                    if (
-                      (k.includes("pre-key") || k.includes("sender-key-memory")) &&
-                      !k.includes("creds") &&
-                      !k.startsWith("session-")
-                    ) {
-                      expiredKeys.push(k);
+                // ثانياً: ضمان حصة أساسية من كل نوع موجود لكي لا يختفي أي نوع
+                const typeNames = Array.from(groups.keys());
+                const perTypeMinimum = Math.max(1, Math.floor(remainingBudget / Math.max(1, typeNames.length)));
+
+                for (const type of typeNames) {
+                  if (remainingBudget <= 0) break;
+                  const list = groups.get(type) || [];
+                  let takenForType = 0;
+                  for (const item of list) {
+                    if (takenForType >= perTypeMinimum || remainingBudget <= 0) break;
+                    if (!keepSet.has(item.key)) {
+                      keepSet.add(item.key);
+                      takenForType++;
+                      remainingBudget--;
                     }
                   }
                 }
 
-                if (expiredKeys.length > 0) {
-                  for (let i = 0; i < expiredKeys.length; i += 100) {
-                    const batch = expiredKeys.slice(i, i + 100);
+                // ثالثاً: إكمال بقية السعة حتى 150 من أحدث المفاتيح المتبقية
+                if (remainingBudget > 0) {
+                  const leftovers = [];
+                  for (const [, list] of groups.entries()) {
+                    for (const item of list) {
+                      if (!keepSet.has(item.key)) leftovers.push(item);
+                    }
+                  }
+                  leftovers.sort((a, b) => {
+                    if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
+                    return b.ts - a.ts;
+                  });
+                  for (const item of leftovers) {
+                    if (remainingBudget <= 0) break;
+                    keepSet.add(item.key);
+                    remainingBudget--;
+                  }
+                }
+
+                const toDelete = allKeys.filter(k => !keepSet.has(k));
+                if (toDelete.length > 0) {
+                  for (let i = 0; i < toDelete.length; i += 100) {
+                    const batch = toDelete.slice(i, i + 100);
                     await redis(["DEL", ...batch]);
                     await redis(["HDEL", "arthur_session_ts", ...batch]);
                   }
-                  console.log(`Cleaned ${expiredKeys.length} stale session keys (>= 4h).`);
-                } else {
-                  console.log("No stale session keys (>= 4h) found.");
                 }
+
+                console.log(`Kept ${keepSet.size} keys across ${typeNames.length} types; deleted ${toDelete.length} keys.`);
               } catch (err) {
-                console.log("Redis cleanup skipped:", err.message);
+                console.log("Redis trim skipped:", err.message);
               }
             })();
           '
@@ -136,73 +195,111 @@ jobs:
             git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           fi
 
-          # حماية: ضمان وجود قواعد الاستبعاد دون مسح ما هو موجود
           touch .gitignore
-          for rule in "node_modules/" "**/node_modules/" ".env" ".env.*" "ملف_الاتصال/" "**/ملف_الاتصال/" "**/auth_info_baileys/" "**/creds.json" "**/*.log"; do
-            grep -qxF "$rule" .gitignore || echo "$rule" >> .gitignore
-          done
+          add_ignore() {
+            grep -qxF "$1" .gitignore || echo "$1" >> .gitignore
+          }
+
+          add_ignore "node_modules/"
+          add_ignore "**/node_modules/"
+          add_ignore ".env"
+          add_ignore ".env.*"
+          add_ignore "!/.env.example"
+          add_ignore "ArthurSession/"
+          add_ignore "ArthurSubBot/"
+          add_ignore "BackupSession/"
+          add_ignore "session/"
+          add_ignore "sessions/"
+          add_ignore "/ملف_الاتصال"
+          add_ignore "ملف_الاتصال/"
+          add_ignore "database/"
+          add_ignore "auth_info_baileys/"
+          add_ignore "**/creds.json"
+          add_ignore "*.db"
+          add_ignore "*.db.*"
+          add_ignore "*.pem"
+          add_ignore "*.key"
+          add_ignore "*.p12"
+          add_ignore "*.pfx"
+          add_ignore "*.log"
+          add_ignore "temp/"
+          add_ignore "tmp/"
 
           save_changes() {
-            echo "Checking repository changes..."
+            echo "Checking ARTHUR repository changes..."
 
-            # تنظيف الملفات المؤقتة الأقدم من 4 ساعات داخل مجلد الاتصال إن وُجدت دون مسح creds أو الجلسة الأساسية
+            # إبقاء بحد أقصى 150 ملفاً في مجلد الاتصال مع الحفاظ على creds.json وملفات session الأساسية
             if [ -d "ملف_الاتصال" ]; then
-              find "ملف_الاتصال" -type f -mmin +240 ! -name "creds.json" ! -name "session-*" -delete 2>/dev/null || true
+              TOTAL_FILES=$(find "ملف_الاتصال" -maxdepth 1 -type f | wc -l)
+              if [ "$TOTAL_FILES" -gt 150 ]; then
+                find "ملف_الاتصال" -maxdepth 1 -type f ! -name "creds.json" ! -name "session-*" -printf "%T@ %p\n" \
+                  | sort -n \
+                  | head -n $((TOTAL_FILES - 150)) \
+                  | cut -d' ' -f2- \
+                  | xargs -r rm -f 2>/dev/null || true
+              fi
             fi
 
-            # إزالة الملفات الحساسة من تتبع Git فقط (دون حذفها من بيئة التشغيل)
-            git rm -r --cached --ignore-unmatch node_modules yuno_bot/node_modules "ملف_الاتصال" auth_info_baileys 2>/dev/null || true
+            git rm -r --cached --ignore-unmatch -- \
+              node_modules \
+              ArthurSession \
+              ArthurSubBot \
+              BackupSession \
+              session \
+              sessions \
+              "ملف_الاتصال" \
+              database \
+              auth_info_baileys 2>/dev/null || true
+
             git rm --cached --ignore-unmatch .env .env.* "**/creds.json" "**/*.pem" "**/*.key" 2>/dev/null || true
 
-            # إضافة كافة المجلدات والملفات الجديدة/المعدلة مع استبعاد الحساس والمؤقت
-            git add --ignore-errors --all -- . \
+            git add --ignore-errors -A -- . \
+              ':(exclude)node_modules/**' \
+              ':(exclude)**/node_modules/**' \
+              ':(exclude)ArthurSession/**' \
+              ':(exclude)**/ArthurSession/**' \
+              ':(exclude)ArthurSubBot/**' \
+              ':(exclude)**/ArthurSubBot/**' \
+              ':(exclude)BackupSession/**' \
+              ':(exclude)**/BackupSession/**' \
+              ':(exclude)session/**' \
+              ':(exclude)**/session/**' \
+              ':(exclude)sessions/**' \
+              ':(exclude)**/sessions/**' \
               ':(exclude)ملف_الاتصال/**' \
               ':(exclude)**/ملف_الاتصال/**' \
-              ':(exclude).env' \
-              ':(exclude).env.*' \
-              ':(exclude)**/.env' \
-              ':(exclude)**/.env.*' \
-              ':(exclude)**/node_modules/**' \
+              ':(exclude)database/**' \
+              ':(exclude)**/database/**' \
+              ':(exclude)auth_info_baileys/**' \
               ':(exclude)**/auth_info_baileys/**' \
               ':(exclude)**/creds.json' \
-              ':(exclude)**/*.pem' \
-              ':(exclude)**/*.key' \
-              ':(exclude)**/*.p12' \
-              ':(exclude)**/*.pfx' \
-              ':(exclude)**/*.log'
+              ':(exclude)temp/**' \
+              ':(exclude)tmp/**'
 
             if git diff --cached --quiet; then
               echo "No new changes to commit."
               return 0
             fi
 
-            echo "Staged changes summary:"
+            echo "Changes detected:"
             git diff --cached --name-status
 
-            git commit -m "Auto-save ARTHUR repository progress" || {
-              echo "Git commit failed."
-              return 1
-            }
+            git commit -m "Auto-save ARTHUR repository progress" || return 1
 
-            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || {
-              echo "Git fetch failed for branch ${BRANCH_NAME}."
-              return 1
-            }
+            git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
 
             if [ "$(git rev-list --count "origin/${BRANCH_NAME}..HEAD")" -gt 0 ]; then
               if ! git push origin "HEAD:${BRANCH_NAME}"; then
-                echo "Push failed; attempting rebase with remote branch..."
+                echo "Push failed. Synchronizing..."
+                git fetch origin "+refs/heads/${BRANCH_NAME}:refs/remotes/origin/${BRANCH_NAME}" || return 1
                 git -c rebase.autoStash=true rebase "origin/${BRANCH_NAME}" || {
                   git rebase --abort || true
-                  echo "Rebase conflict detected; changes remain safe in runner."
+                  echo "Rebase conflict. Save failed."
                   return 1
                 }
-                git push origin "HEAD:${BRANCH_NAME}" || {
-                  echo "Git push failed after rebase."
-                  return 1
-                }
+                git push origin "HEAD:${BRANCH_NAME}" || return 1
               fi
-              echo "Repository changes pushed successfully to ${BRANCH_NAME}."
+              echo "Repository changes saved successfully."
             else
               echo "No new commits to push."
             fi
