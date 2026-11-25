@@ -4,12 +4,13 @@
 import axios from 'axios';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { createWriteStream, unlinkSync, statSync } from 'fs';
+import { createWriteStream, unlinkSync, statSync, readFileSync } from 'fs';
 import { pipeline } from 'stream/promises';
 import { generateWAMessageFromContent, proto, prepareWAMessageMedia } from '@whiskeysockets/baileys';
 import { theme } from "../core/theme.js";
 
-const BOT_IMAGE = 'https://d.uguu.se/QHtBthSq.jpg';
+// ✧ ما عاد نحتاج رابط صورة غلاف - إذا حبيت صورة حطها هنا وإذا خربت البوت بيكمل بدونها
+const BOT_IMAGE = '';
 
 const STYLES = {
     'انيمي': { suffix: 'anime style, studio ghibli, detailed anime art', emoji: '🌸' },
@@ -66,10 +67,22 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             id: `${usedPrefix}${command} ${key} _confirm`
         }));
 
-        const media = await prepareWAMessageMedia(
-            { image: { url: BOT_IMAGE } },
-            { upload: conn.waUploadToServer }
-        );
+        // ✧ تثبيت: صورة الغلاف اختيارية - إذا فشلت نكمل بدونها ولا يطفي
+        let media = null
+        if (BOT_IMAGE) {
+            try {
+                const res = await axios.get(BOT_IMAGE, { responseType: 'arraybuffer', timeout: 8000 })
+                if (res.data) {
+                    media = await prepareWAMessageMedia(
+                        { image: Buffer.from(res.data) },
+                        { upload: conn.waUploadToServer }
+                    )
+                }
+            } catch (e) {
+                console.log('[ART] صورة الغلاف فشلت، بنكمل بدونها:', e.message)
+                media = null
+            }
+        }
 
         const msg = generateWAMessageFromContent(m.chat, {
             interactiveMessage: proto.Message.InteractiveMessage.fromObject({
@@ -83,10 +96,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
                     ])
                 },
                 footer: { text: global.watermark || '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight Unit ✧' },
-                header: {
+                header: media?.imageMessage ? {
                     hasMediaAttachment: true,
                     subtitle: global.watermark || '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight Unit ✧',
                     imageMessage: media.imageMessage,
+                } : {
+                    title: '🎨 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓',
+                    hasMediaAttachment: false,
+                    subtitle: global.watermark || '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight Unit ✧',
                 },
                 nativeFlowMessage: {
                     buttons: [{
@@ -176,8 +193,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             throw new Error('فشل الرسم — جرب وصف مختلف');
         }
 
+        // ✧ تثبيت: نرسل الصورة من الملف نفسه مو من رابط، عشان ما تفشل
         await conn.sendMessage(m.chat, {
-            image: { url: filePath },
+            image: readFileSync(filePath),
             caption: theme.build([
                 { type: 'title', text: `${style.emoji} 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تـم الـرسـم!` },
                 { type: 'divider' },
