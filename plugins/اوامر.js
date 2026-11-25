@@ -1,5 +1,6 @@
 // plugins/اوامر.js
 // ✧ ARTHUR BOT - قائمة الأقسام والأوامر التلقائية ✧
+// ✧ بطريقة كلاوس - ButtonV2 مثل ق1 ✧
 
 import fs from 'fs'
 import path from 'path'
@@ -30,8 +31,7 @@ const normalize = (value = '') => String(value)
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
-// ✧ طريقة أسهل: قاعدة واحدة لكل أمر بدل تكرار 20 اسم ✧
-// أي كلمة تشبه هذي ترجع للاسم الأساسي
+// ✧ طريقة أسهل: قاعدة واحدة لكل أمر بدل تكرار بنترست ✧
 const CANONICAL_RULES = [
     { keys: ['بنتر', 'pint', 'pin'], to: 'بنترست' },
     { keys: ['تيك', 'tiktok', 'tik'], to: 'تيك توك' },
@@ -51,7 +51,6 @@ const getCanonicalCommand = (value = '') => {
 }
 
 const getCanonicalKey = (value = '') => {
-    // مفتاح للمقارنة: نشيل التشكيل والمسافات
     return getCanonicalCommand(value)
         .replace(/[أإآ]/g, 'ا')
         .replace(/ة/g, 'ه')
@@ -143,10 +142,10 @@ const getIcon = (category) => {
     return '📂'
 }
 
-// ✧ هنا إيموجي لكل أمر حسب معناه ✧
+// ✧ إيموجي لكل أمر حسب معناه ✧
 const getCommandIcon = (command = '') => {
     const n = normalize(command)
-    if (n.includes('نخبه') || n.includes('النخبه') || n.includes('vip') || n.includes('مميز')) return '👑'
+    if (n.includes('نخبه') || n.includes('vip') || n.includes('مميز')) return '👑'
     if (n.includes('منشن') || n.includes('تاق') || n.includes('الكل')) return '👥'
     if (n.includes('طرد') || n.includes('حظر') || n.includes('بان')) return '🚫'
     if (n.includes('ترقيه') || n.includes('ادمن') || n.includes('مشرف')) return '👑'
@@ -167,7 +166,7 @@ const getCommandIcon = (command = '') => {
     if (n.includes('اغنيه') || n.includes('موسيقى') || n.includes('صوت')) return '🎵'
     if (n.includes('لعبه') || n.includes('لعب') || n.includes('تحدي')) return '🎮'
     if (n.includes('زواج') || n.includes('حب')) return '💍'
-    if (n.includes('ذكاء') || n.includes('شات') || n.includes('اسال')) return '🤖'
+    if (n.includes('ذكاء') || n.includes('اسال')) return '🤖'
     if (n.includes('قران') || n.includes('اسلام') || n.includes('دعاء') || n.includes('اذكار')) return '🕌'
     if (n.includes('تنصيب') || n.includes('تثبيت')) return '⚙️'
     if (n.includes('اوامر') || n.includes('قائمه') || n.includes('مساعده')) return '📂'
@@ -272,7 +271,6 @@ const getPluginCommands = (plugin, fileName) => {
         if (!unique.some(prev => isSameCommand(prev, cmd))) unique.push(cmd)
     }
     if (unique.length === 1) return unique
-    // لو فيه أكثر من اسم، نختار الأطول والأوضح
     const longest = [...unique].sort((a, b) => b.length - a.length)[0]
     return [longest]
 }
@@ -374,35 +372,55 @@ const findCategory = (menu, name) => {
     return menu.categories.find(item => normalize(item.name) === wanted)
 }
 
-// ✧ فتح القسم - نفس ستايل ق1 مع زرين تحت ✧
+// ✧ فتح القسم - بطريقة كلاوس ButtonV2 مثل ق1 بالضبط - مضمون ✧
 const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
-    const menu = await getMenuData()
-    const category = findCategory(menu, categoryName)
-    if (!category) {
-        return conn.sendMessage(m.chat, {
-            text: `❌ القسم "${categoryName}" غير موجود.\nاكتب ${usedPrefix}اوامر لعرض الأقسام المتاحة.`
-        }, { quoted: m })
-    }
+    try {
+        const menu = await getMenuData()
+        const category = findCategory(menu, categoryName)
+        if (!category) {
+            return m.reply(`❌ القسم "${categoryName}" غير موجود.\nاكتب ${usedPrefix}اوامر لعرض الأقسام المتاحة.`)
+        }
 
-    let body = `*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮*\n`
-    body += `*┃* ${category.icon} ${category.name}\n`
-    body += `*╰━━━━━━━━━━━━━━╯*\n\n`
-    body += `*╭━━━〔 ${category.icon} ${category.name.toUpperCase()} 〕━━━╮*\n`
-    for (const item of category.commands) {
-        body += `*┃* ${item.icon} ╎ ${usedPrefix}${item.command}\n`
-    }
-    body += `*╰━━━━━━━━━━━━━━╯*\n\n`
-    body += `💡 *إجمالي أوامر القسم:* ${category.commands.length}\n\n`
-    body += `*╰─ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ─╯*`
+        let body = `*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮*\n`
+        body += `*┃* ${category.icon} ${category.name}\n`
+        body += `*╰━━━━━━━━━━━━━━╯*\n\n`
+        body += `*╭━━━〔 ${category.icon} ${category.name.toUpperCase()} 〕━━━╮*\n`
+        for (const item of category.commands) {
+            body += `*┃* ${item.icon} ╎ ${usedPrefix}${item.command}\n`
+        }
+        body += `*╰━━━━━━━━━━━━━━╯*\n\n`
+        body += `💡 *إجمالي أوامر القسم:* ${category.commands.length}\n\n`
+        body += `*╰─ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ─╯*`
 
-    // نفس الزرين اللي في ق1
-    await new ButtonV2(conn)
-        .setBody(body)
-        .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
-        .setThumbnail(imageUrl)
-        .addButton('📂 الـقـائـمـة', '.اوامر')
-        .addButton('👑 تـنـصـيـب', '.تنصيب')
-        .send(m.chat)
+        // نفس كود ق1 حرفياً
+        await new ButtonV2(conn)
+            .setBody(body)
+            .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
+            .setThumbnail(imageUrl)
+            .addButton('📂 الـقـائـمـة', '.اوامر')
+            .addButton('👑 تـنـصـيـب', '.تنصيب')
+            .send(m.chat)
+
+    } catch (e) {
+        console.error('❌ [قسم] ButtonV2 ERROR:', e)
+        // لو فشل الزر لأي سبب، نرسل القسم كنص عشان ما يقول خطا
+        try {
+            const menu = await getMenuData()
+            const category = findCategory(menu, categoryName)
+            if (category) {
+                let fallback = `*${category.icon} ${category.name}*\n\n`
+                for (const item of category.commands) {
+                    fallback += `${item.icon} .${item.command}\n`
+                }
+                fallback += `\n📂 .اوامر | 👑 .تنصيب`
+                await m.reply(fallback)
+            } else {
+                await m.reply('❌ حصل خطأ أثناء فتح القسم.')
+            }
+        } catch {
+            await m.reply('❌ حصل خطأ أثناء فتح القسم.')
+        }
+    }
 }
 
 const handler = async (m, { conn, usedPrefix }) => {
@@ -413,6 +431,7 @@ const handler = async (m, { conn, usedPrefix }) => {
         if (sectionMatch && sectionMatch[1]?.trim()) {
             return await showCategory(conn, m, sectionMatch[1].trim(), prefix)
         }
+
         try {
             await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } })
         } catch {}
@@ -504,12 +523,14 @@ const handler = async (m, { conn, usedPrefix }) => {
     }
 }
 
+// ✧ هذا هو السر: before بس يحول الزر لنص، و handler هو اللي ينفذ مثل ق1 ✧
 handler.before = async (m) => {
     const selected = getSelectedId(m)
     if (!selected) return
-    if (/^(?:\.|!|\/|#)?قسم\s+/i.test(selected)) {
+    if (/^(?:\.|!|\/|#)?قسم\s+/i.test(selected) || selected === '.اوامر' || selected === '.تنصيب') {
         m.text = selected
         m.body = selected
+        m.message = { conversation: selected }
     }
 }
 
