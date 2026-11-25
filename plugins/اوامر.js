@@ -22,6 +22,7 @@ const imageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
 const CACHE_TTL = 30_000
 let cachedMenu = null
 let cachedAt = 0
+let cachedImgBuffer = null
 
 const normalize = (value = '') => String(value)
     .trim()
@@ -59,7 +60,11 @@ const COMMAND_ALIASES = {
     'واتس': 'واتساب',
     'whatsapp': 'واتساب',
     'جوجل': 'جوجل',
-    'google': 'جوجل'
+    'google': 'جوجل',
+    'نخبه': 'النخبه',
+    'النخبه': 'النخبه',
+    'نخبة': 'النخبه',
+    'النخبة': 'النخبه'
 }
 
 const getCanonicalCommand = (value = '') => {
@@ -80,6 +85,10 @@ const getCanonicalCommand = (value = '') => {
         return 'بنترست'
     }
 
+    if (compact === 'نخبه' || compact === 'النخبه') {
+        return 'النخبه'
+    }
+
     return String(value).trim()
 }
 
@@ -92,6 +101,8 @@ const getCommandEmoji = (cmd = '') => {
     if (k.includes('لينك') || k.includes('رابط')) return '🔗'
     if (k.includes('طرد') || k.includes('حظر') || k.includes('بان')) return '🚫'
     if (k.includes('اعفاء') || k.includes('ترقيه') || k.includes('مشرف')) return '👤'
+    if (k.includes('نخبه')) return '👑'
+    if (k.includes('تحويل')) return '🔄'
     if (
         k.includes('بنتر') ||
         k.includes('تيك') ||
@@ -257,6 +268,7 @@ const commandsFromPattern = (pattern) => {
         )
 }
 
+// يضمن إرجاع أمر واحد فقط لكل ملف بلجن
 const getPluginCommands = (plugin, fileName) => {
     let candidates = []
 
@@ -282,7 +294,11 @@ const getPluginCommands = (plugin, fileName) => {
         const command = getCanonicalCommand(cleanCommand(item))
         if (!command || command.length > 45) continue
         if (/^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
-        if (!cleaned.includes(command)) cleaned.push(command)
+        const key = getCommandKey(command)
+        if (!key) continue
+        if (!cleaned.some(c => getCommandKey(c) === key)) {
+            cleaned.push(command)
+        }
     }
 
     if (!cleaned.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
@@ -291,21 +307,11 @@ const getPluginCommands = (plugin, fileName) => {
     }
 
     if (!cleaned.length) return []
-
-    const unique = []
-    for (const cmd of cleaned) {
-        const key = getCommandKey(cmd)
-        if (!unique.some(prev => getCommandKey(prev) === key)) unique.push(cmd)
-    }
-
-    if (unique.length === 1) return unique
+    if (cleaned.length === 1) return [cleaned[0]]
 
     const canonicalValues = new Set(Object.values(COMMAND_ALIASES))
-    const preferred = unique.find(c => canonicalValues.has(c))
-    if (preferred) return [preferred]
-
-    const longest = [...unique].sort((a, b) => b.length - a.length)[0]
-    return [longest]
+    const preferred = cleaned.find(c => canonicalValues.has(c))
+    return [preferred || cleaned[0]]
 }
 
 const getMenuData = async (force = false) => {
@@ -426,22 +432,90 @@ const findCategory = (menu, name) => {
     return menu.categories.find(item => normalize(item.name) === wanted)
 }
 
-const sendSectionCard = async (conn, m, body) => {
+const loadImageBuffer = async (url) => {
+    if (cachedImgBuffer) return cachedImgBuffer
+    try {
+        const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+        if (!response.ok) return null
+        const buf = Buffer.from(await response.arrayBuffer())
+        if (!buf.length) return null
+        cachedImgBuffer = buf
+        return buf
+    } catch {
+        return null
+    }
+}
+
+// إرسال رسالة القسم مع زرّين مضمونين تحت كل قسم
+const sendSectionCard = async (conn, m, body, prefix = '.') => {
+    const imgBuf = await loadImageBuffer(imageUrl)
+
     if (typeof ButtonV2 === 'function') {
         try {
             const card = new ButtonV2(conn)
                 .setBody(body)
                 .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
-            if (typeof card.setThumbnail === 'function') card.setThumbnail(imageUrl)
+            if (imgBuf && typeof card.setThumbnail === 'function') {
+                card.setThumbnail(imgBuf)
+            }
             if (typeof card.addButton === 'function') {
-                card.addButton('📂 الـقـائـمـة', '.اوامر')
-                card.addButton('👑 تـنـصـيـب', '.تنصيب')
+                card.addButton('📂 الـقـائـمـة', `${prefix}اوامر`)
+                card.addButton('👑 تـنـصـيـب', `${prefix}تنصيب`)
             }
             return await card.send(m.chat)
-        } catch (error) {
-            console.log('[اوامر] تعذر إرسال أزرار القسم، سيتم الإرسال نصياً:', error.message)
-        }
+        } catch {}
+
+        // محاولة ثانية بدون صورة لو فشل التحميل داخل ButtonV2
+        try {
+            const cardNoImg = new ButtonV2(conn)
+                .setBody(body)
+                .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
+            if (typeof cardNoImg.addButton === 'function') {
+                cardNoImg.addButton('📂 الـقـائـمـة', `${prefix}اوامر`)
+                cardNoImg.addButton('👑 تـنـصـيـب', `${prefix}تنصيب`)
+            }
+            return await cardNoImg.send(m.chat)
+        } catch {}
     }
+
+    // بديل أزرار quick_reply عبر interactiveMessage إذا لم يرسل ButtonV2
+    try {
+        const msg = generateWAMessageFromContent(
+            m.chat,
+            {
+                viewOnceMessage: {
+                    message: {
+                        interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                            body: { text: body },
+                            footer: { text: '© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓' },
+                            nativeFlowMessage: {
+                                buttons: [
+                                    {
+                                        name: 'quick_reply',
+                                        buttonParamsJson: JSON.stringify({
+                                            display_text: '📂 الـقـائـمـة',
+                                            id: `${prefix}اوامر`
+                                        })
+                                    },
+                                    {
+                                        name: 'quick_reply',
+                                        buttonParamsJson: JSON.stringify({
+                                            display_text: '👑 تـنـصـيـب',
+                                            id: `${prefix}تنصيب`
+                                        })
+                                    }
+                                ],
+                                messageParamsJson: ''
+                            }
+                        })
+                    }
+                }
+            },
+            { userJid: conn?.user?.jid || conn?.user?.id, quoted: m }
+        )
+        return await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+    } catch {}
+
     return conn.sendMessage(m.chat, { text: body }, { quoted: m })
 }
 
@@ -455,7 +529,7 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 *┃* 🚫 ╎ القسم "${categoryName}" غير موجود
 *┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
-        return await sendSectionCard(conn, m, notFoundBody)
+        return await sendSectionCard(conn, m, notFoundBody, usedPrefix)
     }
 
     const cmdLines = category.commands
@@ -467,22 +541,13 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 ${cmdLines}
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
 
-    return await sendSectionCard(conn, m, body)
+    return await sendSectionCard(conn, m, body, usedPrefix)
 }
 
 const loadHeaderMedia = async (conn, url) => {
     try {
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        })
-        if (!response.ok) {
-            console.log('[اوامر] فشل تحميل الصورة - الحالة:', response.status)
-            return null
-        }
-
-        const arrayBuffer = await response.arrayBuffer()
-        const buffer = Buffer.from(arrayBuffer)
-        if (!buffer.length) return null
+        const buffer = await loadImageBuffer(url)
+        if (!buffer?.length) return null
 
         const uploadFn = conn.waUploadToServer || conn.uploadFile
         if (typeof uploadFn === 'function') {
