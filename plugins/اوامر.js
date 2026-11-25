@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
-const imageUrl = 'https://i.postimg.cc/9RgMB9sk/8e505743fb7edbac3e4f8a16d8097021.jpg''
+const imageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg''
 
 const CACHE_TTL = 30_000
 let cachedMenu = null
