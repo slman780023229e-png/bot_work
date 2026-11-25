@@ -1,155 +1,109 @@
 // plugins/رابط.js
-// ✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✦ رفع 10 سيرفرات - ما يفشل أبدا
-
 import fetch from 'node-fetch'
 import FormData from 'form-data'
 
-let handler = async (m, { conn }) => {
-    try {
-        const quoted = m.quoted
-        if (!quoted) return m.reply(`رد على صورة / فيديو / صوت واكتب .رابط`)
+const USERHASH = '9e25d335656bf4117a91f0a0f'
 
-        const mime = quoted.mimetype || quoted.msg?.mimetype || ''
-        if (!mime.startsWith('image/') && !mime.startsWith('video/') && !mime.startsWith('audio/')) {
-            return m.reply('❌ نوع الملف ده غير مدعوم.')
+let handler = async (m, { conn, text }) => {
+    try {
+        // ===== رفع رابط لحسابك - urlupload =====
+        if (text?.startsWith('http')) {
+            await m.reply('⏳ جاري نسخ الرابط لحسابك...')
+            const form = new FormData()
+            form.append('reqtype', 'urlupload')
+            form.append('userhash', USERHASH)
+            form.append('url', text.trim())
+            const res = await fetch('https://catbox.moe/user/api.php', {
+                method: 'POST', body: form, headers: form.getHeaders()
+            })
+            let url = (await res.text()).trim()
+            if (!url.startsWith('https://')) return m.reply(`❌ فشل: ${url}`)
+            return m.reply(`✅ تم النسخ لحسابك:\n${url}`)
         }
 
-        await m.reply('⏳ جاري رفع الملف على 10 سيرفرات...')
+        const quoted = m.quoted
+        if (!quoted) return m.reply(`رد على صورة واكتب .رابط\nأو اكتب .رابط + رابط الصورة`)
 
+        const mime = quoted.mimetype || ''
         const buffer = await quoted.download()
-        if (!buffer?.length) throw new Error('تعذر تحميل الملف.')
-
-        let ext = mime.split('/')[1]?.split(';')[0] || 'bin'
+        let ext = mime.split('/')[1]?.split(';')[0] || 'jpg'
         if (mime === 'image/jpeg') ext = 'jpg'
-        if (mime === 'image/webp') ext = 'jpg'
+        if (mime.includes('ogg')) ext = 'opus'
         if (mime === 'audio/mpeg') ext = 'mp3'
-        if (mime === 'audio/mp4') ext = 'm4a'
-        if (mime.includes('audio/ogg')) ext = 'opus'
-        if (mime === 'video/mp4') ext = 'mp4'
-
         const filename = `arthur_${Date.now()}.${ext}`
-        const sizeKB = (buffer.length / 1024).toFixed(1)
 
-        // ===== دوال الرفع =====
+        await m.reply('⏳ جاري الرفع...')
 
-        // 1 - سيرفرات ستايل Pomf
         async function uploadPomf(url) {
             const form = new FormData()
             form.append('files[]', buffer, { filename, contentType: mime })
-            const res = await fetch(url, {
-                method: 'POST', body: form,
-                headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
-            })
+            const res = await fetch(url, { method: 'POST', body: form, headers: form.getHeaders() })
             const data = await res.json()
             if (data?.success && data?.files?.[0]?.url) {
                 let u = data.files[0].url
-                if (!u.startsWith('http')) {
-                    let base = url.replace('/upload.php', '')
-                    u = base + u
-                }
+                if (!u.startsWith('http')) u = url.replace('/upload.php', '') + u
                 return u
             }
             throw new Error('pomf fail')
         }
 
-        // 2 - Catbox
         async function uploadCatbox() {
             const form = new FormData()
             form.append('reqtype', 'fileupload')
-            form.append('userhash', '')
+            form.append('userhash', USERHASH)
             form.append('fileToUpload', buffer, { filename, contentType: mime })
             const res = await fetch('https://catbox.moe/user/api.php', {
-                method: 'POST', body: form,
-                headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
+                method: 'POST', body: form, headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
             })
             const txt = (await res.text()).trim()
             if (txt.startsWith('https://')) return txt
             throw new Error(txt)
         }
 
-        // 3 - Litterbox - مؤقت 72 ساعة
-        async function uploadLitterbox() {
+        async function upload0x(url) {
             const form = new FormData()
-            form.append('reqtype', 'fileupload')
-            form.append('time', '72h')
-            form.append('fileToUpload', buffer, { filename, contentType: mime })
-            const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
-                method: 'POST', body: form,
-                headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
-            })
+            form.append('file', buffer, { filename, contentType: mime })
+            const res = await fetch(url, { method: 'POST', body: form, headers: form.getHeaders() })
             const txt = (await res.text()).trim()
             if (txt.startsWith('https://')) return txt
             throw new Error(txt)
         }
 
-        // 4 - سيرفرات ستايل 0x0
-        async function upload0x(url, field = 'file') {
-            const form = new FormData()
-            form.append(field, buffer, { filename, contentType: mime })
-            const res = await fetch(url, {
-                method: 'POST', body: form,
-                headers: { ...form.getHeaders(), 'User-Agent': 'ArthurBot/1.0' }
-            })
-            const txt = (await res.text()).trim()
-            if (txt.startsWith('https://')) return txt
-            throw new Error(txt)
-        }
-
-        // 5 - tmpfiles
         async function uploadTmpfiles() {
             const form = new FormData()
             form.append('file', buffer, { filename, contentType: mime })
-            const res = await fetch('https://tmpfiles.org/api/v1/upload', {
-                method: 'POST', body: form,
-                headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
-            })
+            const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: form, headers: form.getHeaders() })
             const data = await res.json()
             if (data?.url) return data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
             throw new Error('tmpfiles fail')
         }
 
-        // ===== قائمة 10 سيرفرات بالترتيب =====
         const servers = [
-            { name: 'Satoru - الأفضل الحين', fn: () => uploadPomf('https://upload.satoru.click/upload.php') },
-            { name: 'Catbox - سنتين', fn: () => uploadCatbox() },
-            { name: '0x0.st - سنة', fn: () => upload0x('https://0x0.st') },
+            { name: 'Catbox - حسابك ✅', fn: () => uploadCatbox() },
+            { name: 'Satoru', fn: () => uploadPomf('https://upload.satoru.click/upload.php') },
+            { name: '0x0.st', fn: () => upload0x('https://0x0.st') },
             { name: 'Pomf Lain', fn: () => uploadPomf('https://pomf.lain.la/upload.php') },
             { name: 'Pomf2 Lain', fn: () => uploadPomf('https://pomf2.lain.la/upload.php') },
-            { name: 'Envs.sh - سنة', fn: () => upload0x('https://envs.sh') },
-            { name: 'Tmpfiles - ساعة', fn: () => uploadTmpfiles() },
-            { name: 'Litterbox - 72 ساعة', fn: () => uploadLitterbox() },
+            { name: 'Envs.sh', fn: () => upload0x('https://envs.sh') },
+            { name: 'Tmpfiles', fn: () => uploadTmpfiles() },
             { name: 'Transfer.sh', fn: () => upload0x('https://transfer.sh/') },
-            { name: 'File.io - مؤقت', fn: () => upload0x('https://file.io/') },
         ]
 
-        let fileUrl = ''
-        let serverName = ''
-
+        let fileUrl = '', serverName = ''
         for (let s of servers) {
-            try {
-                fileUrl = await s.fn()
-                serverName = s.name
-                break
-            } catch (e) {
-                console.log(`[رابط] فشل ${s.name}:`, e.message?.slice(0, 100))
-                continue
-            }
+            try { fileUrl = await s.fn(); serverName = s.name; break }
+            catch (e) { console.log(`فشل ${s.name}:`, e.message?.slice(0,100)); continue }
         }
 
-        if (!fileUrl) return m.reply(`❌ كل الـ 10 سيرفرات مشغولة، جرب بعد شوي.`)
+        if (!fileUrl) return m.reply('❌ كل السيرفرات مشغولة، جرب بعد شوي.')
 
-        await conn.sendMessage(m.chat, {
-            text: `╭━━━〔 🔗 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮\n┃\n┃  ✓ تم الرفع بنجاح\n┃\n┃  🌐 السيرفر: ${serverName}\n┃  📦 الحجم: ${sizeKB} KB\n┃  🔁 الاحتياط: 10 سيرفرات\n┃\n┃  🔗 الرابط:\n┃\n┃  ${fileUrl}\n┃\n╰━━━━━━━━━━━━━━━━━━━━╯`
-        }, { quoted: m })
+        await m.reply(`✅ تم الرفع بنجاح\n\n🌐 السيرفر: ${serverName}\n🔗 الرابط:\n${fileUrl}`)
 
     } catch (e) {
         console.log(e)
-        await m.reply(`❌ فشل الرفع، جرب مرة ثانية.`)
+        await m.reply('❌ فشل الرفع')
     }
 }
 
-handler.command = /^(رابط|لرابط|وارابط|وا_رابط)$/i
-handler.help = ['رابط', 'لرابط', 'وارابط']
-handler.tags = ['tools']
-
+handler.command = /^(رابط)$/i
 export default handler
