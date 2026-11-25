@@ -401,26 +401,64 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 
     if (!category) {
         return conn.sendMessage(m.chat, {
-            text: `❌ القسم "${categoryName}" غير موجود.\nاكتب ${usedPrefix}اوامر لعرض الأقسام المتاحة.`
+            text: `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n❌ القسم *"${categoryName}"* غير موجود.\nاكتب *${usedPrefix}اوامر* لعرض الأقسام المتاحة.\n\n*✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦*`
         }, { quoted: m })
     }
 
-    let body = `*${category.icon} [ ${category.name} ]*\n`
-    body += `_${category.description}_\n\n`
+    let body =
+`*◇❐ ═━╾⚡ ╼━═ ❐◇*
+
+${category.icon} *قسم: ${category.name}*
+_${category.description}_
+📊 *عدد الأوامر:* *${category.commands.length}*
+
+`
 
     for (const item of category.commands) {
-        body += `❖ ${usedPrefix}${item.command}\n`
+        body += `❖ *${usedPrefix}${item.command}*\n`
         if (item.description && item.description !== 'أمر من أوامر البوت') {
-            body += `└ 🏷️ _${item.description}_\n`
+            body += `└ ✦ _${item.description}_\n`
         }
         body += '\n'
     }
 
-    body += `💡 *إجمالي أوامر القسم:* ${category.commands.length}`
+    body += `*✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦*`
     return conn.sendMessage(m.chat, { text: body }, { quoted: m })
 }
 
+const loadHeaderMedia = async (conn, url) => {
+    try {
+        const response = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        })
+        if (!response.ok) {
+            console.log('[اوامر] فشل تحميل الصورة - الحالة:', response.status)
+            return null
+        }
+
+        const arrayBuffer = await response.arrayBuffer()
+        const buffer = Buffer.from(arrayBuffer)
+        if (!buffer.length) return null
+
+        const uploadFn = conn.waUploadToServer || conn.uploadFile
+        if (typeof uploadFn === 'function') {
+            return await prepareWAMessageMedia(
+                { image: buffer },
+                { upload: uploadFn.bind(conn) }
+            )
+        }
+
+        return await prepareWAMessageMedia({ image: buffer }, {})
+    } catch (error) {
+        console.log('[اوامر] تعذر تجهيز صورة القائمة:', error.message)
+        return null
+    }
+}
+
 const handler = async (m, { conn, usedPrefix }) => {
+    if (m._menuHandled) return
+    m._menuHandled = true
+
     try {
         const prefix = usedPrefix || '.'
         const selected = getSelectedId(m)
@@ -450,19 +488,7 @@ const handler = async (m, { conn, usedPrefix }) => {
             }, { quoted: m })
         }
 
-        let media = null
-        try {
-            const response = await fetch(imageUrl, { signal: AbortSignal.timeout(5000) })
-            if (response.ok) {
-                const buffer = Buffer.from(await response.arrayBuffer())
-                media = await prepareWAMessageMedia(
-                    { image: buffer },
-                    { upload: conn.waUploadToServer }
-                )
-            }
-        } catch (error) {
-            console.log('[اوامر] تعذر تحميل صورة القائمة:', error.message)
-        }
+        const media = await loadHeaderMedia(conn, imageUrl)
 
         const bodyText =
 `*◇❐ ═━╾⚡ ╼━═ ❐◇*
@@ -564,14 +590,13 @@ const handler = async (m, { conn, usedPrefix }) => {
     }
 }
 
-handler.before = async (m, { conn, usedPrefix }) => {
+handler.before = async (m) => {
     const selected = getSelectedId(m)
     if (!selected) return
 
     if (/^(?:\.|!|\/|#)?قسم\s+/i.test(selected)) {
         m.text = selected
         m.body = selected
-        await handler(m, { conn, usedPrefix: usedPrefix || '.' })
     }
 }
 
