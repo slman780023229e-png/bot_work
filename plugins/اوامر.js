@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
-const imageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg''
+const imageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
 
 const CACHE_TTL = 30_000
 let cachedMenu = null
@@ -26,10 +26,10 @@ const normalize = (value = '') => String(value)
     .trim()
     .replace(/[أإآ]/g, 'ا')
     .replace(/ة/g, 'ه')
+    .replace(/[\u064B-\u065F]/g, '')
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
-// ✧ كل الأشكال لنفس الأمر ترجع لاسم واحد أساسي ✧
 const COMMAND_ALIASES = {
     'بينتر': 'بنترست',
     'بنتر': 'بنترست',
@@ -61,44 +61,28 @@ const COMMAND_ALIASES = {
     'google': 'جوجل'
 }
 
-const getCanonicalKey = (value = '') => {
-    let key = normalize(value)
-    if (COMMAND_ALIASES[key]) return COMMAND_ALIASES[key]
-    key = key
-        .replace(/[أإآ]/g, 'ا')
-        .replace(/ة/g, 'ه')
-        .replace(/[\u064B-\u0652]/g, '')
-        .replace(/\s+/g, '')
-        .replace(/ا/g, '')
-        .replace(/ي/g, '')
-        .replace(/ه$/g, '')
-    return key
-}
-
-// أي أمر يشبه بنترست يرجع بنترست إجباري
 const getCanonicalCommand = (value = '') => {
     const n = normalize(value)
+    if (!n) return ''
     if (COMMAND_ALIASES[n]) return COMMAND_ALIASES[n]
-    const k = getCanonicalKey(value)
-    if (k.startsWith('بنتر') || k.startsWith('bntr') || k.includes('pinter') || k === 'pint' || k === 'pin') return 'بنترست'
-    for (const [alias, canon] of Object.entries(COMMAND_ALIASES)) {
-        if (getCanonicalKey(alias) === k) return canon
+
+    const compact = n.replace(/\s+/g, '')
+    if (
+        compact.startsWith('بنتر') ||
+        compact.startsWith('بينتر') ||
+        compact.startsWith('بنتير') ||
+        compact.startsWith('بينتير') ||
+        compact.includes('pinter') ||
+        compact === 'pint' ||
+        compact === 'pin'
+    ) {
+        return 'بنترست'
     }
+
     return String(value).trim()
 }
 
-const isSameCommand = (a, b) => {
-    const ka = getCanonicalKey(a)
-    const kb = getCanonicalKey(b)
-    if (ka === kb) return true
-    if (getCanonicalCommand(a) === getCanonicalCommand(b)) return true
-    if (!ka || !kb) return false
-    if (ka.length >= 3 && kb.length >= 3) {
-        if (ka.startsWith(kb) && (ka.length - kb.length) <= 3) return true
-        if (kb.startsWith(ka) && (kb.length - ka.length) <= 3) return true
-    }
-    return false
-}
+const getCommandKey = (value = '') => normalize(getCanonicalCommand(value)).replace(/\s+/g, '')
 
 const CATEGORY_ALIASES = {
     group: 'إدارة المجموعات',
@@ -242,7 +226,6 @@ const commandsFromPattern = (pattern) => {
         )
 }
 
-// ✧ القاعدة الجديدة المضمونة: كل ملف يطلع منه أمر واحد بس ✧
 const getPluginCommands = (plugin, fileName) => {
     let candidates = []
 
@@ -263,7 +246,6 @@ const getPluginCommands = (plugin, fileName) => {
         candidates.push(...commandsFromPattern(plugin.customPrefix))
     }
 
-    // نظف كل المرشحين وحولهم للاسم الأساسي
     const cleaned = []
     for (const item of candidates) {
         const command = getCanonicalCommand(cleanCommand(item))
@@ -272,7 +254,6 @@ const getPluginCommands = (plugin, fileName) => {
         if (!cleaned.includes(command)) cleaned.push(command)
     }
 
-    // إذا ما فيه ولا مرشح، استخدم اسم الملف
     if (!cleaned.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
         const fallback = getCanonicalCommand(cleanCommand(path.basename(fileName, '.js')))
         if (fallback && !/^ق\s*\d+$/i.test(fallback)) cleaned.push(fallback)
@@ -280,17 +261,12 @@ const getPluginCommands = (plugin, fileName) => {
 
     if (!cleaned.length) return []
 
-    // ✧ هنا التثبيت: لو الملف فيه أكثر من طريقة لنفس الأمر، نختار واحد بس
-    // ندمج المتشابهين أولاً
     const unique = []
     for (const cmd of cleaned) {
-        if (!unique.some(prev => isSameCommand(prev, cmd))) unique.push(cmd)
+        const key = getCommandKey(cmd)
+        if (!unique.some(prev => getCommandKey(prev) === key)) unique.push(cmd)
     }
 
-    // لو بعد الدمج لسى فيه أكثر من أمر مختلف، نختار الأفضل واحد فقط:
-    // 1- إذا واحد منهم هو الاسم الأساسي في COMMAND_ALIASES خذه
-    // 2- وإلا خذ الأطول (الأوضح) لأنه غالباً هو الاسم الكامل مثل بنترست مو بينتر
-    // 3- وإلا خذ الأول
     if (unique.length === 1) return unique
 
     const canonicalValues = new Set(Object.values(COMMAND_ALIASES))
@@ -307,7 +283,6 @@ const getMenuData = async (force = false) => {
 
     const files = scanPluginFiles(__dirname)
     const categories = new Map()
-    const globalSeen = []
 
     for (const fullPath of files) {
         try {
@@ -328,10 +303,9 @@ const getMenuData = async (force = false) => {
 
             for (const rawCommand of commands) {
                 const command = getCanonicalCommand(rawCommand)
-                if (globalSeen.some(prev => isSameCommand(prev, command))) continue
-                globalSeen.push(command)
+                const key = getCommandKey(command)
+                if (!key) continue
 
-                const key = getCanonicalKey(command)
                 if (!bucket.has(key)) {
                     bucket.set(key, {
                         command,
@@ -449,7 +423,8 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 const handler = async (m, { conn, usedPrefix }) => {
     try {
         const prefix = usedPrefix || '.'
-        const fullText = String(m.text || m.body || '').trim()
+        const selected = getSelectedId(m)
+        const fullText = String(selected || m.text || m.body || '').trim()
         const sectionMatch = fullText.match(/^(?:[.!/#])?قسم(?:\s+|$)(.*)$/i)
 
         if (sectionMatch && sectionMatch[1]?.trim()) {
@@ -466,6 +441,7 @@ const handler = async (m, { conn, usedPrefix }) => {
         try {
             user = await conn.getName(m.sender) || 'صديقي'
         } catch {}
+
         const menu = await getMenuData()
 
         if (!menu.categories.length) {
@@ -476,7 +452,7 @@ const handler = async (m, { conn, usedPrefix }) => {
 
         let media = null
         try {
-            const response = await fetch(imageUrl)
+            const response = await fetch(imageUrl, { signal: AbortSignal.timeout(5000) })
             if (response.ok) {
                 const buffer = Buffer.from(await response.arrayBuffer())
                 media = await prepareWAMessageMedia(
@@ -505,7 +481,7 @@ const handler = async (m, { conn, usedPrefix }) => {
             header: category.icon,
             title: `⟨ ${category.name} ⟩`.slice(0, 24),
             description: `${category.description} | ${category.commands.length} أمر`.slice(0, 72),
-            id: `.قسم ${category.name}`
+            id: `${prefix}قسم ${category.name}`
         }))
 
         const sections = []
@@ -556,7 +532,7 @@ const handler = async (m, { conn, usedPrefix }) => {
                         name: 'quick_reply',
                         buttonParamsJson: JSON.stringify({
                             display_text: '🤖 تنصيب البوت',
-                            id: '.تنصيب'
+                            id: `${prefix}تنصيب`
                         })
                     }
                 ],
@@ -574,7 +550,7 @@ const handler = async (m, { conn, usedPrefix }) => {
                 }
             },
             {
-                userJid: conn.user.jid,
+                userJid: conn?.user?.jid || conn?.user?.id,
                 quoted: m
             }
         )
@@ -588,13 +564,14 @@ const handler = async (m, { conn, usedPrefix }) => {
     }
 }
 
-handler.before = async (m) => {
+handler.before = async (m, { conn, usedPrefix }) => {
     const selected = getSelectedId(m)
     if (!selected) return
 
     if (/^(?:\.|!|\/|#)?قسم\s+/i.test(selected)) {
         m.text = selected
         m.body = selected
+        await handler(m, { conn, usedPrefix: usedPrefix || '.' })
     }
 }
 
