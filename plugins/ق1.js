@@ -10,7 +10,7 @@ let handler = async (m, { conn }) => {
         const user = await conn.getName(m.sender)
 
         const imageUrl =
-            'https://files.catbox.moe/fnge8r.jpg'
+            'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
 
         const text =
 `*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮*
