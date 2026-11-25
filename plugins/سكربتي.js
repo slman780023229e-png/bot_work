@@ -16,9 +16,10 @@ const __dirname = dirname(__filename)
 
 const allowedNumbers = [
     '185899757400132@s.whatsapp.net',
-    '233144431206490@s.whatsapp.net',
+    '35984058130514@s.whatsapp.net',
+    '116853997338673@s.whatsapp.net',
     '135974805860531@s.whatsapp.net',
-    '116853997338673@s.whatsapp.net'
+    '233144431206490@s.whatsapp.net'
 ]
 
 const handler = async (m, { conn }) => {
