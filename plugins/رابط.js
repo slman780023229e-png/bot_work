@@ -1,15 +1,12 @@
-// plugins/رابط.js - باليوزرهاش الصح
+// plugins/رابط.js - روابط دائمة ما تنحذف
 import fetch from 'node-fetch'
 import FormData from 'form-data'
-
-const USERHASH = '4478575393ad6a406dcd08cc8'
 
 let handler = async (m, { conn }) => {
     try {
         const quoted = m.quoted
         if (!quoted) return m.reply('❌ رد على صورة واكتب .رابط')
-
-        await m.reply('⏳ جاري الرفع على حسابك...')
+        await m.reply('⏳ جاري الرفع رابط دائم...')
         const mime = quoted.mimetype || 'image/jpeg'
         const buffer = await quoted.download()
         let ext = 'jpg'
@@ -17,48 +14,42 @@ let handler = async (m, { conn }) => {
         if (mime.includes('mp4')) ext = 'mp4'
         const filename = `arthur_${Date.now()}.${ext}`
 
-        // 1 - Catbox - حسابك
+        // 1 - Catbox بدون حساب - دائم ✅
         try {
             const form = new FormData()
             form.append('reqtype', 'fileupload')
-            form.append('userhash', USERHASH)
+            form.append('userhash', '')
             form.append('fileToUpload', buffer, { filename, contentType: mime })
-            const res = await fetch('https://catbox.moe/user/api.php', {
-                method: 'POST', body: form, headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
-            })
+            const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form, headers: form.getHeaders() })
             const txt = (await res.text()).trim()
-            console.log('Catbox رد:', res.status, txt)
-            if (txt.startsWith('https://')) return m.reply(`✅ تم الرفع على حسابك:\n${txt}`)
-            await m.reply(`❌ Catbox رفض: ${txt}\n\nبجرب سيرفر بديل...`)
-        } catch (e) {
-            await m.reply(`❌ Catbox ما وصل: ${e.message}\nبجرب سيرفر بديل...`)
-        }
+            if (txt.startsWith('https://')) return m.reply(`✅ دائم - ما ينحذف:\n${txt}`)
+        } catch (e) { console.log(e.message) }
 
-        // 2 - Tmpfiles - بديل شغال
+        // 2 - Pomf Lain - دائم ✅
         try {
             const form = new FormData()
-            form.append('file', buffer, { filename, contentType: mime })
-            const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: form, headers: form.getHeaders() })
+            form.append('files[]', buffer, { filename, contentType: mime })
+            const res = await fetch('https://pomf.lain.la/upload.php', { method: 'POST', body: form, headers: form.getHeaders() })
             const data = await res.json()
-            if (data?.url) return m.reply(`✅ Tmpfiles:\n${data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')}`)
+            if (data?.files?.[0]?.url) {
+                let u = data.files[0].url
+                if (!u.startsWith('http')) u = 'https://pomf.lain.la' + u
+                return m.reply(`✅ دائم - ما ينحذف:\n${u}`)
+            }
         } catch (e) { console.log(e.message) }
 
-        // 3 - Litterbox
+        // 3 - Uguu - مؤقت 3 ساعات فقط
         try {
             const form = new FormData()
-            form.append('reqtype', 'fileupload')
-            form.append('time', '72h')
-            form.append('fileToUpload', buffer, { filename, contentType: mime })
-            const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', { method: 'POST', body: form, headers: form.getHeaders() })
-            const txt = (await res.text()).trim()
-            if (txt.startsWith('https://')) return m.reply(`✅ Litterbox:\n${txt}`)
+            form.append('files[]', buffer, { filename, contentType: mime })
+            const res = await fetch('https://uguu.se/upload.php', { method: 'POST', body: form, headers: form.getHeaders() })
+            const data = await res.json()
+            if (data?.files?.[0]?.url) return m.reply(`⚠️ مؤقت - ينحذف بعد 3 ساعات:\n${data.files[0].url}`)
         } catch (e) { console.log(e.message) }
 
-        return m.reply('❌ كل السيرفرات رفضت')
+        return m.reply('❌ كل المواقع مشغولة')
 
-    } catch (e) {
-        await m.reply(`❌ خطأ: ${e.message}`)
-    }
+    } catch (e) { await m.reply(`❌ خطأ: ${e.message}`) }
 }
 handler.command = /^(رابط)$/i
 export default handler
