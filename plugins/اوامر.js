@@ -10,6 +10,7 @@ import {
     proto
 } from '@whiskeysockets/baileys'
 import fetch from 'node-fetch'
+import { ButtonV2 } from '../core/NIXCODE.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -83,6 +84,36 @@ const getCanonicalCommand = (value = '') => {
 }
 
 const getCommandKey = (value = '') => normalize(getCanonicalCommand(value)).replace(/\s+/g, '')
+
+const getCommandEmoji = (cmd = '') => {
+    const k = normalize(cmd)
+    if (k.includes('منشن')) return '🎀'
+    if (k.includes('بوست')) return '🪄'
+    if (k.includes('لينك') || k.includes('رابط')) return '🔗'
+    if (k.includes('طرد') || k.includes('حظر') || k.includes('بان')) return '🚫'
+    if (k.includes('اعفاء') || k.includes('ترقيه') || k.includes('مشرف')) return '👤'
+    if (
+        k.includes('بنتر') ||
+        k.includes('تيك') ||
+        k.includes('انستا') ||
+        k.includes('فيس') ||
+        k.includes('يوتيوب') ||
+        k.includes('تحميل')
+    ) return '📥'
+    if (
+        k.includes('لعبه') ||
+        k.includes('تحدي') ||
+        k.includes('مسابقه') ||
+        k.includes('اكس') ||
+        k.includes('سؤال')
+    ) return '🎮'
+    if (k.includes('ملصق') || k.includes('ستيكر')) return '🖼️'
+    if (k.includes('ذكاء') || k.includes('ai') || k.includes('شات')) return '🤖'
+    if (k.includes('اغاني') || k.includes('موسيقى') || k.includes('صوت')) return '🎵'
+    if (k.includes('قران') || k.includes('اذكار') || k.includes('حديث') || k.includes('صلاه')) return '🕌'
+    if (k.includes('مطور') || k.includes('ريستارت') || k.includes('تحديث')) return '👑'
+    return '⚡'
+}
 
 const CATEGORY_ALIASES = {
     group: 'إدارة المجموعات',
@@ -395,35 +426,48 @@ const findCategory = (menu, name) => {
     return menu.categories.find(item => normalize(item.name) === wanted)
 }
 
+const sendSectionCard = async (conn, m, body) => {
+    if (typeof ButtonV2 === 'function') {
+        try {
+            const card = new ButtonV2(conn)
+                .setBody(body)
+                .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
+            if (typeof card.setThumbnail === 'function') card.setThumbnail(imageUrl)
+            if (typeof card.addButton === 'function') {
+                card.addButton('📂 الـقـائـمـة', '.اوامر')
+                card.addButton('👑 تـنـصـيـب', '.تنصيب')
+            }
+            return await card.send(m.chat)
+        } catch (error) {
+            console.log('[اوامر] تعذر إرسال أزرار القسم، سيتم الإرسال نصياً:', error.message)
+        }
+    }
+    return conn.sendMessage(m.chat, { text: body }, { quoted: m })
+}
+
 const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
     const menu = await getMenuData()
     const category = findCategory(menu, categoryName)
 
     if (!category) {
-        return conn.sendMessage(m.chat, {
-            text: `*◇❐ ═━╾⚡ ╼━═ ❐◇*\n\n❌ القسم *"${categoryName}"* غير موجود.\nاكتب *${usedPrefix}اوامر* لعرض الأقسام المتاحة.\n\n*✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦*`
-        }, { quoted: m })
+        const notFoundBody =
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* 🚫 ╎ القسم "${categoryName}" غير موجود
+*┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
+        return await sendSectionCard(conn, m, notFoundBody)
     }
 
-    let body =
-`*◇❐ ═━╾⚡ ╼━═ ❐◇*
+    const cmdLines = category.commands
+        .map(item => `*┃* ${getCommandEmoji(item.command)} ╎ ${item.command}`)
+        .join('\n')
 
-${category.icon} *قسم: ${category.name}*
-_${category.description}_
-📊 *عدد الأوامر:* *${category.commands.length}*
+    const body =
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+${cmdLines}
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
 
-`
-
-    for (const item of category.commands) {
-        body += `❖ *${usedPrefix}${item.command}*\n`
-        if (item.description && item.description !== 'أمر من أوامر البوت') {
-            body += `└ ✦ _${item.description}_\n`
-        }
-        body += '\n'
-    }
-
-    body += `*✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 | الأفضل دائماً ✦*`
-    return conn.sendMessage(m.chat, { text: body }, { quoted: m })
+    return await sendSectionCard(conn, m, body)
 }
 
 const loadHeaderMedia = async (conn, url) => {
@@ -491,17 +535,12 @@ const handler = async (m, { conn, usedPrefix }) => {
         const media = await loadHeaderMedia(conn, imageUrl)
 
         const bodyText =
-`*◇❐ ═━╾⚡ ╼━═ ❐◇*
-
-⚡ أهلاً بك يا ${user}
-
-📂 الأقسام: *${menu.categories.length}*
-⚔️ الأوامر: *${menu.totalCommands}*
-
-✦ القوة .. السرعة .. الهيبة
-✦ اختر القسم لعرض أوامره
-
-*𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓*`
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* 👑 ╎ أهلاً بك يا ${user}
+*┃* 📂 ╎ الأقسام: *${menu.categories.length}*
+*┃* ⚔️ ╎ الأوامر: *${menu.totalCommands}*
+*┃* ⚡ ╎ اختر القسم لعرض أوامره
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
 
         const rows = menu.categories.map(category => ({
             header: category.icon,
