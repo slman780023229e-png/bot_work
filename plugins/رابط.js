@@ -1,97 +1,72 @@
-// plugins/link.js
-// ✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - رفع ملف ورابط ✦
+// plugins/رابط.js
+// ✦ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✦ عدة أوامر في ملف واحد - Pomf
+
 import fetch from 'node-fetch'
 import FormData from 'form-data'
 
-let handler = async (m, { conn, usedPrefix }) => {
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+let handler = async (m, { conn }) => {
     try {
         const quoted = m.quoted
-        if (!quoted) {
-            return m.reply(`
-╭───────────────╮
-│  🔗 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓  │
-╰───────────────╯
-│
-│  رد على:
-│  🖼️ صورة
-│  🎬 فيديو
-│  🎵 صوت
-│  🎨 ملصق
-│
-│  واكتب:
-│  ${usedPrefix}رابط
-│
-╰────────────────
-`)
-        }
+        if (!quoted) return m.reply(`رد على صورة / فيديو / صوت واكتب .رابط`)
 
         const mime = quoted.mimetype || quoted.msg?.mimetype || ''
-        console.log('[رابط] mime:', mime)
-
-        const supported = mime.startsWith('image/') || mime.startsWith('video/') || mime.startsWith('audio/') || mime === 'image/webp' || mime.includes('sticker')
-        if (!supported) {
-            return m.reply(`❌ نوع الملف غير مدعوم.\nالنوع اللي وصلني: ${mime || 'فارغ'}`)
+        if (!mime.startsWith('image/') && !mime.startsWith('video/') && !mime.startsWith('audio/')) {
+            return m.reply('❌ نوع الملف ده غير مدعوم.')
         }
 
-        await m.reply('⏳ جاري رفع الملف...')
+        await m.reply('⏳ جاري رفع الملف على Pomf...')
 
         const buffer = await quoted.download()
-        if (!buffer || !buffer.length) throw new Error('تعذر تحميل الملف من الرسالة.')
+        if (!buffer?.length) throw new Error('تعذر تحميل الملف.')
 
-        let ext = 'bin'
+        let ext = mime.split('/')[1]?.split(';')[0] || 'bin'
         if (mime === 'image/jpeg') ext = 'jpg'
-        else if (mime === 'image/png') ext = 'png'
-        else if (mime === 'image/webp') ext = 'webp'
-        else if (mime === 'image/gif') ext = 'gif'
-        else if (mime === 'video/mp4') ext = 'mp4'
-        else if (mime === 'audio/mpeg') ext = 'mp3'
-        else if (mime === 'audio/ogg') ext = 'ogg'
-        else if (mime.includes('/')) ext = mime.split('/')[1].split(';')[0]
+        if (mime === 'audio/mpeg') ext = 'mp3'
+        if (mime === 'audio/mp4') ext = 'm4a'
+        if (mime === 'video/mp4') ext = 'mp4'
 
         const filename = `arthur_${Date.now()}.${ext}`
+        let fileUrl = ''
 
-        // ── المحاولة 1: Catbox - شغال الحين ──
-        try {
-            const form = new FormData()
-            form.append('reqtype', 'fileupload')
-            form.append('fileToUpload', buffer, { filename, contentType: mime })
-            const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form })
-            const url = (await res.text()).trim()
-            console.log('[رابط] Catbox:', url)
-            if (url.startsWith('https://')) {
-                return conn.sendMessage(m.chat, {
-                    text: `╭━━━〔 🔗 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮\n┃\n┃  ✓ تم رفع الملف بنجاح\n┃\n┃  📁 النوع: ${mime}\n┃  📦 الحجم: ${(buffer.length / 1024).toFixed(1)} KB\n┃\n┃  🔗 الرابط:\n┃\n┃  ${url}\n┃\n╰━━━━━━━━━━━━━━━━━━━━╯`
-                }, { quoted: m })
-            }
-        } catch (e) { console.log('[رابط] Catbox فشل:', e.message) }
+        const endpoints = [
+            'https://pomf.lain.la/upload.php',
+            'https://pomf2.lain.la/upload.php'
+        ]
 
-        // ── المحاولة 2: Uguu - احتياط ──
-        const form2 = new FormData()
-        form2.append('files[]', buffer, { filename, contentType: mime, knownLength: buffer.length })
-        const response = await fetch('https://uguu.se/upload', {
-            method: 'POST',
-            headers: { ...form2.getHeaders(), 'User-Agent': 'Mozilla/5.0' },
-            body: form2
-        })
-        const raw = await response.text()
-        console.log('UGUU RESPONSE:', raw)
-        let data = JSON.parse(raw)
-        const fileUrl = data?.files?.[0]?.url || data?.url
-        if (!fileUrl) throw new Error('فشل رفع الملف في كل المواقع.')
+        for (let i = 0; i < endpoints.length && !fileUrl; i++) {
+            try {
+                if (i > 0) await sleep(1000)
+                const form = new FormData()
+                form.append('files[]', buffer, { filename, contentType: mime })
+                const res = await fetch(endpoints[i], {
+                    method: 'POST',
+                    body: form,
+                    headers: { ...form.getHeaders(), 'User-Agent': 'Mozilla/5.0' }
+                })
+                const data = await res.json()
+                if (data?.success && data?.files?.[0]?.url) {
+                    let u = data.files[0].url
+                    fileUrl = u.startsWith('http') ? u : 'https://pomf.lain.la/' + u
+                }
+            } catch {}
+        }
+
+        if (!fileUrl) return m.reply(`❌ Pomf مشغول الحين، جرب بعد دقيقة.`)
 
         await conn.sendMessage(m.chat, {
-            text: `╭━━━〔 🔗 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮\n┃\n┃  ✓ تم رفع الملف بنجاح\n┃  📁 النوع: ${mime}\n┃  🔗 الرابط:\n┃  ${fileUrl}\n┃\n╰━━━━━━━━━━━━━━━━━━━━╯`
+            text: `╭━━━〔 🔗 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮\n┃\n┃  ✓ تم الرفع بنجاح\n┃\n┃  🌐 السيرفر: Pomf - دائم\n┃  📦 الحجم: ${(buffer.length / 1024).toFixed(1)} KB\n┃\n┃  🔗 الرابط:\n┃\n┃  ${fileUrl}\n┃\n╰━━━━━━━━━━━━━━━━━━━━╯`
         }, { quoted: m })
 
-    } catch (error) {
-        console.error('UPLOAD ERROR:', error)
-        await m.reply(`╭━━━〔 ❌ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 〕━━━╮\n┃\n┃ فشل رفع الملف\n┃ السبب:\n┃ ${error.message}\n┃\n╰━━━━━━━━━━━━━━━━━━━━╯`)
+    } catch (e) {
+        await m.reply(`❌ فشل الرفع، جرب مرة ثانية.`)
     }
 }
 
-// ✅ هنا كان الخطأ - صلحته
-handler.command = /^(رابط|لرابط|link|upload)$/i
-handler.help = ['رابط']
+// بس أوامر الرابط - حذفت رفع ولينك
+handler.command = /^(رابط|لرابط|وارابط|وا_رابط)$/i
+handler.help = ['رابط', 'لرابط', 'وارابط']
 handler.tags = ['tools']
 
 export default handler
