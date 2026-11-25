@@ -4,7 +4,7 @@
 import fetch from 'node-fetch'
 
 const welcomeImage = 'https://pomf2.lain.la/f/83fjjuya.jpg'
-const goodbyeImage = 'https://files.catbox.moe/bgvugr.jpg'
+const goodbyeImage = 'https://pomf2.lain.la/f/83fjjuya.jpg'
 const audioUrl = 'https://file.garden/aauvg01sjleV_ic1/%D8%AA%D8%B1%D8%AD%D9%8A%D8%A8.opus'
 
 const handler = async (m, { conn, command, args, isAdmin, isOwner }) => {
