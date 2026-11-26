@@ -3,11 +3,6 @@ import crypto from 'crypto'
 import https from 'https'
 import JSZip from 'jszip'
 import sharp from 'sharp'
-import fs from 'fs'
-import os from 'os'
-import path from 'path'
-import { spawn } from 'child_process'
-import { downloadContentFromMessage, prepareWAMessageMedia } from '@whiskeysockets/baileys'
 
 // ARTHUR BOT - Native WhatsApp Sticker Pack
 // Baileys 7.0.0-rc14
@@ -124,23 +119,20 @@ async function searchPinterest(query) {
     const results = resource?.data?.results || []
 
     for (const pin of results) {
-      const image = pin?.images?.orig?.url || pin?.images?.['736x']?.url
-      const videos = pin?.videos?.video_list || pin?.video?.video_list || {}
-      const video = videos?.V_720P?.url ||
-        videos?.V_480P?.url ||
-        videos?.V_EXP7?.url ||
-        Object.values(videos).find(v => v?.url)?.url ||
-        pin?.videos?.url ||
-        null
-      const key = video || image
-      if (!key || seen.has(key)) continue
-      seen.add(key)
-      pins.push({ image, video })
+      const url = pin?.images?.orig?.url ||
+        pin?.images?.['736x']?.url
+
+      if (!url || seen.has(url)) continue
+
+      seen.add(url)
+      pins.push(url)
+
       if (pins.length >= LIMIT) break
     }
 
     const next = resource?.bookmark
     if (!next || next === '-end-' || next === bookmark) break
+
     bookmark = next
   }
 
@@ -175,153 +167,6 @@ async function downloadImage(url) {
   }
 
   return buffer
-}
-
-// ================================================
-// VIDEO / FFMPEG HELPERS
-// Requires ffmpeg and ffprobe installed on the host.
-// ================================================
-
-function runFFmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args])
-    let stderr = ''
-    child.stderr.on('data', d => { stderr += d.toString() })
-    child.on('error', error => reject(new Error(
-      error.code === 'ENOENT'
-        ? 'FFmpeg غير مثبت. ثبّت ffmpeg على السيرفر أولًا.'
-        : error.message
-    )))
-    child.on('close', code => {
-      if (code === 0) resolve()
-      else reject(new Error(`فشل FFmpeg: ${stderr.slice(-700)}`))
-    })
-  })
-}
-
-async function downloadBuffer(url, maxBytes = 30 * 1024 * 1024) {
-  const response = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 30000,
-    maxContentLength: maxBytes,
-    headers: { 'User-Agent': HEADERS['user-agent'], referer: BASE + '/' }
-  })
-  const buffer = Buffer.from(response.data)
-  if (buffer.length < 1000) throw new Error('الملف المحمّل غير صالح.')
-  return buffer
-}
-
-async function videoToAnimatedWebp(input, output, seconds = 6) {
-  await runFFmpeg([
-    '-i', input,
-    '-t', String(seconds),
-    '-an',
-    '-vf', 'fps=12,scale=512:512:force_original_aspect_ratio=increase,crop=512:512',
-    '-loop', '0',
-    '-vcodec', 'libwebp',
-    '-lossless', '0',
-    '-q:v', '55',
-    '-compression_level', '4',
-    '-preset', 'picture',
-    output
-  ])
-  const result = await fs.promises.readFile(output)
-  if (!result.length || result.length > 500 * 1024) {
-    throw new Error('حجم الملصق المتحرك تجاوز الحد أو الملف فارغ.')
-  }
-  return result
-}
-
-async function extractQuotedVideo(m) {
-  if (m.quoted?.download) {
-    const data = await m.quoted.download()
-    if (data?.length) return Buffer.from(data)
-  }
-
-  const raw = m.quoted?.message || m.msg?.contextInfo?.quotedMessage
-  if (!raw) throw new Error('رد على فيديو أولًا باستخدام الأمر .صوتي')
-
-  const unwrap = value => {
-    if (!value) return null
-    if (value.videoMessage) return value.videoMessage
-    if (value.ephemeralMessage?.message) return unwrap(value.ephemeralMessage.message)
-    if (value.viewOnceMessage?.message) return unwrap(value.viewOnceMessage.message)
-    if (value.viewOnceMessageV2?.message) return unwrap(value.viewOnceMessageV2.message)
-    if (value.documentWithCaptionMessage?.message) return unwrap(value.documentWithCaptionMessage.message)
-    return null
-  }
-
-  const videoMessage = unwrap(raw)
-  if (!videoMessage) throw new Error('الرسالة التي رددت عليها ليست فيديو.')
-
-  const stream = await downloadContentFromMessage(videoMessage, 'video')
-  const chunks = []
-  for await (const chunk of stream) chunks.push(chunk)
-  const buffer = Buffer.concat(chunks)
-  if (!buffer.length) throw new Error('تعذر تحميل الفيديو.')
-  return buffer
-}
-
-async function createSoundSticker(conn, jid, videoBuffer) {
-  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'arthur-sound-'))
-  const input = path.join(dir, 'input.mp4')
-  const webpPath = path.join(dir, 'sticker.webp')
-  const audioPath = path.join(dir, 'audio.ogg')
-
-  try {
-    await fs.promises.writeFile(input, videoBuffer)
-    await videoToAnimatedWebp(input, webpPath, 7)
-
-    await runFFmpeg([
-      '-i', input,
-      '-t', '7',
-      '-vn',
-      '-ac', '1',
-      '-ar', '48000',
-      '-c:a', 'libopus',
-      '-b:a', '64k',
-      '-application', 'voip',
-      '-f', 'ogg',
-      audioPath
-    ])
-
-    const sticker = await fs.promises.readFile(webpPath)
-    const audio = await fs.promises.readFile(audioPath)
-    if (!audio.length) throw new Error('الفيديو لا يحتوي على صوت.')
-
-    const upload = conn.waUploadToServer
-    if (typeof upload !== 'function') {
-      throw new Error('waUploadToServer غير متاحة في اتصال Baileys.')
-    }
-
-    const stickerPrepared = await prepareWAMessageMedia(
-      { sticker, mimetype: 'image/webp' },
-      { upload: upload.bind(conn) }
-    )
-    const audioPrepared = await prepareWAMessageMedia(
-      { audio, mimetype: 'audio/ogg; codecs=opus', ptt: true },
-      { upload: upload.bind(conn) }
-    )
-
-    const stickerMessage = stickerPrepared?.stickerMessage
-    const audioMessage = audioPrepared?.audioMessage
-    if (!stickerMessage || !audioMessage) {
-      throw new Error('تعذر تجهيز وسائط ملصق الصوت.')
-    }
-
-    stickerMessage.isAnimated = true
-    stickerMessage.audioMessage = audioMessage
-
-    await conn.relayMessage(jid, {
-      audioStickerMessage: stickerMessage
-    }, {
-      messageId: crypto.randomBytes(10).toString('hex')
-    })
-
-    return true
-  } finally {
-    await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {})
-  }
 }
 
 // ================================================
@@ -540,7 +385,7 @@ async function uploadMedia(conn, buffer, mediaPath, hkdfInfo) {
 // CREATE STICKER ARCHIVE + TRAY ICON
 // ================================================
 
-async function createStickerArchive(stickers, tray, animated = false) {
+async function createStickerArchive(stickers, tray) {
   const zip = new JSZip()
   const metadata = []
 
@@ -551,7 +396,7 @@ async function createStickerArchive(stickers, tray, animated = false) {
 
     metadata.push({
       fileName,
-      isAnimated: animated,
+      isAnimated: false,
       emojis: ['✨'],
       accessibilityLabel: '',
       isLottie: false,
@@ -573,13 +418,12 @@ async function createStickerArchive(stickers, tray, animated = false) {
 // NATIVE WHATSAPP PACK
 // ================================================
 
-async function sendStickerPack(conn, jid, query, stickers, animated = false) {
+async function sendStickerPack(conn, jid, query, stickers) {
   const tray = await makeTray(stickers[0])
 
   const { archive, metadata } = await createStickerArchive(
     stickers,
-    tray,
-    animated
+    tray
   )
 
   const thumbnail = await makeThumbnail(tray)
@@ -648,98 +492,85 @@ async function sendStickerPack(conn, jid, query, stickers, animated = false) {
 // ================================================
 
 const handler = async (m, { conn, text, usedPrefix, command }) => {
-  let query = text?.trim()
-  const twoWordAnimated = command === 'حزمة' && /^متحركة(?:\\s+|$)/i.test(query || '')
-  if (twoWordAnimated) query = query.replace(/^متحركة\\s*/i, '').trim()
+  const query = text?.trim()
+
   const react = async emoji => {
     try {
-      await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } })
+      await conn.sendMessage(m.chat, {
+        react: {
+          text: emoji,
+          key: m.key
+        }
+      })
     } catch {}
   }
 
-  if (/^صوتي$/i.test(command)) {
-    await react('⏳')
-    try {
-      const video = await extractQuotedVideo(m)
-      await createSoundSticker(conn, m.chat, video)
-      await react('✅')
-      return m.reply('╭━━〔 🔊 ARTHUR SOUND 〕━━╮\n│ تم إرسال ملصق متحرك بالصوت\n│ ARTHUR BOT\n╰━━━━━━━━━━━━━━━━━━╯')
-    } catch (error) {
-      console.error('[ARTHUR SOUND ERROR]', error)
-      await react('❌')
-      return m.reply(`❌ تعذر إنشاء ملصق الصوت.\nالسبب: ${error.message}`)
-    }
-  }
-
-  const animated = twoWordAnimated || /^(حزمةمتحركة|متحركة|انميشن|animatedpack)$/i.test(command)
   if (!query) {
     return m.reply(
       `╭━━〔 📦 ARTHUR PACK 〕━━╮\n` +
-      `│ ثابت: ${usedPrefix}حزمة ناروتو\n` +
-      `│ متحرك: ${usedPrefix}حزمةمتحركة ناروتو\n` +
-      `│ صوت: رد على فيديو بـ ${usedPrefix}صوتي\n` +
-      `│ العدد: حتى 30 ملصقًا\n` +
+      `│ الاستخدام: ${usedPrefix + command} ناروتو\n` +
+      `│ العدد: 30 ملصقًا\n` +
       `│ المصدر: Pinterest\n` +
+      `│ النوع: WhatsApp Sticker Pack\n` +
       `╰━━━━━━━━━━━━━━━━━━╯`
     )
   }
-  if (query.length > 70) return m.reply('❌ اسم الحزمة طويل جدًا.')
+
+  if (query.length > 70) {
+    return m.reply('❌ اسم الحزمة طويل جدًا.')
+  }
 
   await react('⏳')
+
   try {
     await enqueue(async () => {
       await m.reply(
         `🔍 البحث عن: ${query}\n` +
-        `${animated ? '🎞️ البحث عن فيديوهات قابلة للتحويل...' : '📦 تجهيز حزمة واتساب الأصلية...'}\n` +
+        `📦 تجهيز حزمة واتساب الأصلية...\n` +
         `⏳ يرجى الانتظار.`
       )
 
-      const pins = await searchPinterest(query)
-      if (!pins.length) throw new Error('لم يتم العثور على نتائج.')
+      const images = await searchPinterest(query)
+
+      if (!images.length) {
+        throw new Error('لم يتم العثور على صور.')
+      }
 
       const stickers = []
-      for (const pin of pins) {
+
+      for (const url of images) {
         try {
-          let sticker
-          if (animated) {
-            if (!pin.video) continue
-            const videoBuffer = await downloadBuffer(pin.video)
-            const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'arthur-pack-'))
-            try {
-              const input = path.join(dir, 'pin.mp4')
-              const output = path.join(dir, 'pin.webp')
-              await fs.promises.writeFile(input, videoBuffer)
-              sticker = await videoToAnimatedWebp(input, output, 6)
-            } finally {
-              await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {})
-            }
-          } else {
-            if (!pin.image) continue
-            const image = await downloadImage(pin.image)
-            sticker = await makeSticker(image)
-          }
+          const image = await downloadImage(url)
+          const sticker = await makeSticker(image)
+
           if (sticker.length > 100 * 1024) continue
+
           stickers.push(sticker)
         } catch (error) {
-          console.error('[PACK ITEM]', error.message)
+          console.error('[PACK IMAGE]', error.message)
         }
+
         if (stickers.length >= LIMIT) break
       }
 
       if (!stickers.length) {
-        throw new Error(animated
-          ? 'لم أجد فيديوهات Pinterest صالحة للتحويل. جرّب اسمًا آخر.'
-          : 'فشل تحويل الصور إلى ملصقات.')
+        throw new Error('فشل تحويل الصور إلى ملصقات.')
       }
 
-      const count = await sendStickerPack(conn, m.chat, query, stickers, animated)
+      const count = await sendStickerPack(
+        conn,
+        m.chat,
+        query,
+        stickers
+      )
+
       await react('✅')
+
       await m.reply(
         `╭━━〔 👑 ARTHUR PACK 〕━━╮\n` +
         `│ ✅ تم إرسال الحزمة\n` +
         `│ 🎨 الاسم: ${query}\n` +
         `│ 🖼️ الملصقات: ${count}\n` +
-        `│ 🎞️ النوع: ${animated ? 'متحركة' : 'ثابتة'}\n` +
         `│ 📦 حزمة واتساب أصلية\n` +
         `│ ✨ ARTHUR BOT\n` +
         `╰━━━━━━━━━━━━━━━━━━╯`
@@ -747,13 +578,17 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     })
   } catch (error) {
     console.error('[ARTHUR PACK ERROR]', error)
+
     await react('❌')
-    await m.reply(`❌ تعذر إنشاء الحزمة.\nالسبب: ${error.message}`)
+
+    await m.reply(
+      `❌ تعذر إنشاء الحزمة.\nالسبب: ${error.message}`
+    )
   }
 }
 
-handler.help = ['حزمة <اسم>', 'حزمةمتحركة <اسم>', 'صوتي (رد على فيديو)']
+handler.help = ['حزمة']
 handler.tags = ['downloader']
-handler.command = /^(حزمة|حزمةمتحركة|متحركة|انميشن|animatedpack|صوتي|pack|ستيكرات)$/i
+handler.command = /^(حزمة|pack|ستيكرات)$/i
 
 export default handler
