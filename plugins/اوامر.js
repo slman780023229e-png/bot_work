@@ -19,12 +19,12 @@ const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
 const defaultImageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
 
-// إعدادات صور الأقسام مع نسبة قص الجزء السفلي (cropBottom)
+// صور الأقسام مع تصغير يحافظ على الوجه بالكامل وقص سفلي طفيف جدًا (0.05)
 const SECTION_IMAGES = {
-    groups: { url: 'https://files.catbox.moe/yu3pvo.jpg', cropBottom: 0.15 },
-    download: { url: 'https://files.catbox.moe/is2shx.jpg', cropBottom: 0.15 },
-    games: { url: 'https://files.catbox.moe/81wrja.jpg', cropBottom: 0.15 },
-    system: { url: 'https://files.catbox.moe/od62an.jpg', cropBottom: 0.15 }
+    groups: { url: 'https://files.catbox.moe/yu3pvo.jpg', cropBottom: 0.05 },
+    download: { url: 'https://files.catbox.moe/is2shx.jpg', cropBottom: 0.05 },
+    games: { url: 'https://files.catbox.moe/81wrja.jpg', cropBottom: 0.05 },
+    system: { url: 'https://files.catbox.moe/od62an.jpg', cropBottom: 0.05 }
 }
 
 const CACHE_TTL = 30_000
@@ -78,26 +78,47 @@ const getCanonicalCommand = (value = '') => {
 const getCommandKey = (value = '') => normalize(getCanonicalCommand(value)).replace(/\s+/g, '')
 
 const EMOJI_RULES = [
-    [['منشن'], '🎀'],
-    [['بوست'], '🪄'],
-    [['لينك', 'رابط'], '🔗'],
-    [['طرد', 'حظر', 'بان'], '🚫'],
-    [['اعفاء', 'ترقيه', 'مشرف'], '👤'],
-    [['نخبه'], '👑'],
-    [['تحويل'], '🔄'],
-    [['بنتر', 'تيك', 'انستا', 'فيس', 'يوتيوب', 'تحميل'], '📥'],
-    [['لعبه', 'تحدي', 'مسابقه', 'اكس', 'سؤال'], '🎮'],
-    [['ملصق', 'ستيكر'], '🖼️'],
-    [['ذكاء', 'ai', 'شات'], '🤖'],
-    [['اغاني', 'موسيقى', 'صوت'], '🎵'],
-    [['قران', 'اذكار', 'حديث', 'صلاه'], '🕌'],
-    [['مطور', 'ريستارت', 'تحديث'], '👑']
+    [['منشن', 'تاغ', 'نداء'], '🎀'],
+    [['بوست', 'نشر', 'رساله', 'اذاعه'], '🪄'],
+    [['لينك', 'رابط', 'دعوه'], '🔗'],
+    [['طرد', 'حظر', 'بان', 'ازاله', 'مخالفه'], '🚫'],
+    [['اعفاء', 'ترقيه', 'مشرف', 'ادمن', 'رتبه'], '👤'],
+    [['نخبه', 'لقب', 'نقابه', 'ملك', 'تاج'], '👑'],
+    [['تحويل', 'تبديل', 'عكس', 'مقلب'], '🔄'],
+    [['بنتر', 'تيك', 'انستا', 'فيس', 'يوتيوب', 'تحميل', 'تنزيل'], '📥'],
+    [['لعبه', 'تحدي', 'مسابقه', 'اكس', 'سؤال', 'خمن', 'فزوره'], '🎮'],
+    [['ملصق', 'ستيكر', 'صوره', 'تصميم', 'فلتر'], '🖼️'],
+    [['ذكاء', 'ai', 'شات', 'سوال', 'شرح', 'ترجمه'], '🤖'],
+    [['اغاني', 'موسيقى', 'صوت', 'شيله', 'نشيد'], '🎵'],
+    [['قران', 'اذكار', 'حديث', 'صلاه', 'دعاء', 'تسبيح'], '🕌'],
+    [['مطور', 'ريستارت', 'تحديث', 'فحص', 'بنق', 'حاله'], '👑'],
+    [['مجموع', 'قروب', 'حمايه', 'قفل', 'فتح'], '🛡️'],
+    [['بحث', 'جوجل', 'ويكي', 'معلومه'], '🔍']
 ]
 
+const FALLBACK_EMOJIS = ['⚡', '✨', '🎯', '🌟', '🔥', '💎', '🧭', '📌']
+
+// يختار تعبيراً رمزياً مناسباً لأي أمر أو قسم حتى لو لم يطابق قاعدة مباشرة
 const getCommandEmoji = (cmd = '') => {
     const k = normalize(cmd)
+    if (!k) return '⚡'
+
     const found = EMOJI_RULES.find(([keys]) => matchesAny(k, keys))
-    return found ? found[1] : '⚡'
+    if (found) return found[1]
+
+    let hash = 0
+    for (let i = 0; i < k.length; i++) {
+        hash = (hash * 31 + k.charCodeAt(i)) >>> 0
+    }
+    return FALLBACK_EMOJIS[hash % FALLBACK_EMOJIS.length]
+}
+
+const getSectionReaction = (category) => {
+    if (!category) return '🔎'
+    const iconFromCategory = getCommandEmoji(`${category.name} ${category.icon || ''}`)
+    if (iconFromCategory && iconFromCategory !== '⚡') return iconFromCategory
+    const firstCmd = category.commands?.[0]?.command
+    return firstCmd ? getCommandEmoji(firstCmd) : '📂'
 }
 
 const CATEGORY_ALIASES = {
@@ -382,8 +403,8 @@ const loadRawImageBuffer = async (url) => {
     }
 }
 
-// قص الجزء السفلي وتصغير/تأطير الصورة ليظهر الجزء العلوي بشكل مرتب
-const frameSectionImage = async (rawBuf, cropBottom = 0.15, width = 800, height = 560) => {
+// يصغّر الصورة مع الحفاظ على الوجه كاملًا وقص خفيف جدًا من الأسفل
+const frameSectionImage = async (rawBuf, cropBottom = 0.05, maxWidth = 600, maxHeight = 420) => {
     if (!rawBuf?.length) return null
     const sharp = await getSharp()
     if (!sharp) return rawBuf
@@ -394,14 +415,17 @@ const frameSectionImage = async (rawBuf, cropBottom = 0.15, width = 800, height 
         const srcH = meta.height || 0
         let pipeline = sharp(rawBuf)
 
-        if (srcW > 0 && srcH > 0) {
-            const safeRatio = Math.min(Math.max(Number(cropBottom) || 0, 0), 0.45)
+        if (srcW > 0 && srcH > 0 && cropBottom > 0) {
+            const safeRatio = Math.min(Math.max(Number(cropBottom) || 0, 0), 0.12)
             const keepH = Math.max(1, Math.round(srcH * (1 - safeRatio)))
             pipeline = pipeline.extract({ left: 0, top: 0, width: srcW, height: keepH })
         }
 
         return await pipeline
-            .resize(width, height, { fit: 'cover', position: 'top' })
+            .resize(maxWidth, maxHeight, {
+                fit: 'inside',
+                withoutEnlargement: true
+            })
             .jpeg({ quality: 82, mozjpeg: true })
             .toBuffer()
     } catch {
@@ -411,11 +435,11 @@ const frameSectionImage = async (rawBuf, cropBottom = 0.15, width = 800, height 
 
 const loadSectionBuffer = async (imgConfig) => {
     const cfg = typeof imgConfig === 'string'
-        ? { url: imgConfig, cropBottom: 0.15 }
-        : (imgConfig || { url: defaultImageUrl, cropBottom: 0.15 })
+        ? { url: imgConfig, cropBottom: 0.05 }
+        : (imgConfig || { url: defaultImageUrl, cropBottom: 0.05 })
 
     const targetUrl = cfg.url || defaultImageUrl
-    const cropRatio = cfg.cropBottom ?? 0.15
+    const cropRatio = cfg.cropBottom ?? 0.05
     const cacheKey = `${targetUrl}|${cropRatio}`
 
     if (processedImgCache.has(cacheKey)) return processedImgCache.get(cacheKey)
@@ -446,9 +470,9 @@ const buildQuickReplyButtons = (prefix = '.') => [
     { display: '👑 تـنـصـيـب', id: `${prefix}تنصيب` }
 ]
 
-// إرسال رسالة القسم مع صورة مقصوصة من الأسفل ومصغّرة + زرّين مضمونين تحته
+// إرسال رسالة القسم مع صورة مصغّرة تحفظ كامل الوجه + زرّين مضمونين تحته
 const sendSectionCard = async (conn, m, body, prefix = '.', sectionImg = SECTION_IMAGES.system) => {
-    const imgBuf = await loadSectionBuffer(sectionImg) || await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.15 })
+    const imgBuf = await loadSectionBuffer(sectionImg) || await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.05 })
     const buttons = buildQuickReplyButtons(prefix)
 
     if (typeof ButtonV2 === 'function') {
@@ -502,13 +526,23 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
     const category = findCategory(menu, categoryName)
 
     if (!category) {
+        try {
+            await conn.sendMessage(m.chat, { react: { text: '🚫', key: m.key } })
+        } catch {}
+
         const notFoundBody =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* 🚫 ╎ القسم "${categoryName}" غير موجود
 *┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
-        return await sendSectionCard(conn, m, notFoundBody, usedPrefix, { url: defaultImageUrl, cropBottom: 0.15 })
+        return await sendSectionCard(conn, m, notFoundBody, usedPrefix, { url: defaultImageUrl, cropBottom: 0.05 })
     }
+
+    try {
+        await conn.sendMessage(m.chat, {
+            react: { text: getSectionReaction(category), key: m.key }
+        })
+    } catch {}
 
     const cmdLines = category.commands
         .map(item => `*┃* ${getCommandEmoji(item.command)} ╎ ${item.command}`)
@@ -554,7 +588,7 @@ const handler = async (m, { conn, usedPrefix }) => {
             }, { quoted: m })
         }
 
-        const headerBuf = await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.12 })
+        const headerBuf = await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.05 })
         const media = await loadHeaderMediaFromBuffer(conn, headerBuf)
 
         const bodyText =
