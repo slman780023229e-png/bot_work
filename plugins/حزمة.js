@@ -469,7 +469,7 @@ async function sendStickerPack(conn, jid, query, stickers) {
 
       thumbnailDirectPath: thumbUpload.directPath,
       thumbnailSha256: thumbUpload.fileSha256,
-      thumbnailEncSha256: thumbUpload.fileEncSha256,
+      thumbnailEnc256: thumbUpload.fileSha256,
       thumbnailHeight: 252,
       thumbnailWidth: 252,
       imageDataHash: thumbUpload.fileSha256.toString('base64')
@@ -507,12 +507,13 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (!query) {
     return m.reply(
-      `╭━━〔 📦 ARTHUR PACK 〕━━╮\n` +
-      `│ الاستخدام: ${usedPrefix + command} ناروتو\n` +
-      `│ العدد: 30 ملصقًا\n` +
-      `│ المصدر: Pinterest\n` +
-      `│ النوع: WhatsApp Sticker Pack\n` +
-      `╰━━━━━━━━━━━━━━━━━━╯`
+      `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n` +
+      `*┃* ⚡ ╎ *ARTHUR PACK*\n` +
+      `*┃* ⚡ ╎ *الاستخدام:* ${usedPrefix + command} ناروتو\n` +
+      `*┃* ⚡ ╎ *العدد:* 30 ملصقًا\n` +
+      `*┃* ⚡ ╎ *المصدر:* Pinterest\n` +
+      `*┃* ⚡ ╎ *النوع:* WhatsApp Sticker Pack\n` +
+      `*◇❐ ═━━╾⚡╼━━═ ❐◇*`
     )
   }
 
@@ -525,9 +526,10 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   try {
     await enqueue(async () => {
       await m.reply(
-        `🔍 البحث عن: ${query}\n` +
-        `📦 تجهيز حزمة واتساب الأصلية...\n` +
-        `⏳ يرجى الانتظار.`
+        `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n` +
+        `*┃* ⚡ ╎ *البحث:* ${query}\n` +
+        `*┃* ⚡ ╎ *الحالة:* جاري تجهيز الحزمة...\n` +
+        `*◇❐ ═━━╾⚡╼━━═ ❐◇*`
       )
 
       const images = await searchPinterest(query)
@@ -567,13 +569,12 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       await react('✅')
 
       await m.reply(
-        `╭━━〔 👑 ARTHUR PACK 〕━━╮\n` +
-        `│ ✅ تم إرسال الحزمة\n` +
-        `│ 🎨 الاسم: ${query}\n` +
-        `│ 🖼️ الملصقات: ${count}\n` +
-        `│ 📦 حزمة واتساب أصلية\n` +
-        `│ ✨ ARTHUR BOT\n` +
-        `╰━━━━━━━━━━━━━━━━━━╯`
+        `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n` +
+        `*┃* ⚡ ╎ *تم الإرسال:* ARTHUR PACK\n` +
+        `*┃* ⚡ ╎ *الاسم:* ${query}\n` +
+        `*┃* ⚡ ╎ *الملصقات:* ${count}\n` +
+        `*┃* ⚡ ╎ *النوع:* WhatsApp Sticker Pack\n` +
+        `*◇❐ ═━━╾⚡╼━━═ ❐◇*`
       )
     })
   } catch (error) {
@@ -582,7 +583,10 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     await react('❌')
 
     await m.reply(
-      `❌ تعذر إنشاء الحزمة.\nالسبب: ${error.message}`
+      `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n` +
+      `*┃* ⚡ ╎ *تعذر إنشاء الحزمة*\n` +
+      `*┃* ⚡ ╎ *السبب:* ${error.message}\n` +
+      `*◇❐ ═━━╾⚡╼━━═ ❐◇*`
     )
   }
 }
