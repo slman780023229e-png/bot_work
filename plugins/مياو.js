@@ -1,28 +1,29 @@
 // plugins/مياو.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - لعنة مياو 🐾
 
 const cursedUsers = new Map()
 
-// 👑 هنا حط أرقام النخبة - بدون + وبدون مسافات
+// 👑 النخبة + المالك - هذول بس اللي ما يتلعنون
 const ELITE = [
-  '967700000000', // رقمك انت
-  '967711111111', // رقم صاحبك
-  // ضيف هنا أي رقم تبيه يكون من النخبة
+  '967700000000', // رقمك انت - المالك
+  // ضيف هنا أي رقم تبيه يكون محمي زي المالك
 ]
 
 const getJid = (jid = '') => {
-    if (!jid) return ''
+    if (typeof jid === 'object' && jid !== null) {
+        jid = jid.id || jid._id || jid.jid || ''
+    }
+    jid = String(jid || '')
     return jid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net'
 }
 
 const getNum = (jid = '') => {
-    return jid.split(':')[0].replace(/[^0-9]/g, '')
+    if (typeof jid === 'object' && jid !== null) jid = jid.id || ''
+    return String(jid || '').split(':')[0].replace(/[^0-9]/g, '')
 }
 
-let handler = async (m, { conn, text }) => {
+let handler = async (m, { conn }) => {
     try {
         if (!m.isGroup) return
-
         const sender = getJid(m.sender)
         const commandText = typeof m.text === 'string' ? m.text.trim() : ''
         if (!/^\.?مياو(?:\s|$)/i.test(commandText)) return
@@ -47,55 +48,38 @@ let handler = async (m, { conn, text }) => {
 
         target = getJid(target)
 
-        if (target === getJid(conn.user?.id)) {
+        if (target === getJid(conn.user?.id || conn.user?.jid || '')) {
             return m.reply('*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n*┃* ⚡ ╎ 😹 مش هقدر ألعن نفسي يا عم.\n*◇❐ ═━━╾⚡╼╼━━═ ❐◇*')
         }
         if (target === sender) {
             return m.reply('*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n*┃* ⚡ ╎ 🐱 إنت عايز تلعن نفسك ولا إيه؟ 😂\n*◇❐ ═━━╾⚡╼╼━━═ ❐◇*')
         }
 
-        // 👑 حماية النخبة
+        // 👑 حماية المالك / النخبة فقط - المشرف يتلعن عادي
         if (ELITE.includes(getNum(target))) {
             return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* ⚡ ╎ 👑 هذا الشخص من النخبة!
 *┃* ⚡ ╎
-*┃* ⚡ ╎ ✦ @${target.split('@')[0]}
+*┃* ⚡ ╎ ✦ @${getNum(target)}
 *┃* ⚡ ╎ ✦ لا يمكن لعنه 😼
 *┃* ⚡ ╎
 *┃* ⚡ ╎ النخبة فوق اللعنات 👑
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`, { mentions: [target] })
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`)
         }
-
-        // 👑 حماية مشرفين القروب
-        try {
-            const metadata = await conn.groupMetadata(m.chat)
-            const participant = metadata.participants.find(p => getJid(p.id) === target)
-            if (participant && (participant.admin === 'admin' || participant.admin === 'superadmin')) {
-                return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* ⚡ ╎ 👑 هذا الشخص مشرف!
-*┃* ⚡ ╎
-*┃* ⚡ ╎ ✦ @${target.split('@')[0]}
-*┃* ⚡ ╎ ✦ المشرفين ما تنطبق عليهم اللعنة
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`, { mentions: [target] })
-            }
-        } catch {}
 
         cursedUsers.set(m.chat, target)
 
-        await conn.sendMessage(m.chat, {
-            text: `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+        await m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* ⚡ ╎ 😼 تم تفعيل لعنة مياو!
 *┃* ⚡ ╎
 *┃* ⚡ ╎ 👤 الضحية:
-*┃* ⚡ ╎ @${target.split('@')[0]}
+*┃* ⚡ ╎ @${getNum(target)}
 *┃* ⚡ ╎
 *┃* ⚡ ╎ 🐾 البوت هيحذف كل رسائلك
 *┃* ⚡ ╎ ✦ لحد ما تقول: مياو
 *┃* ⚡ ╎
 *┃* ⚡ ╎ 🔓 قول «مياو» لفك اللعنة
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`,
-            mentions: [target]
-        }, { quoted: m })
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`)
 
     } catch (e) {
         console.error('[مياو ERROR]', e)
@@ -110,7 +94,6 @@ handler.before = async (m, { conn }) => {
 
         const cursed = cursedUsers.get(m.chat)
         const sender = getJid(m.sender)
-
         if (sender !== getJid(cursed)) return
 
         if (m.text.trim().toLowerCase() === 'مياو') {
@@ -118,23 +101,16 @@ handler.before = async (m, { conn }) => {
             await m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* ⚡ ╎ 🐱 تم فك اللعنة!
 *┃* ⚡ ╎
-*┃* ⚡ ╎ ✦ @${m.sender.split('@')[0]}
+*┃* ⚡ ╎ ✦ @${getNum(m.sender)}
 *┃* ⚡ ╎ ✦ قلت مياو بنجاح 😽
 *┃* ⚡ ╎
 *┃* ⚡ ╎ 🎉 خلاص تقدر تتكلم براحتك
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`, { mentions: [m.sender] })
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`)
             return
         }
 
         try {
-            await conn.sendMessage(m.chat, {
-                delete: {
-                    remoteJid: m.chat,
-                    fromMe: false,
-                    id: m.key.id,
-                    participant: m.key.participant || m.sender
-                }
-            })
+            await conn.sendMessage(m.chat, { delete: m.key })
         } catch (e) {
             console.log('[مياو] فشل حذف الرسالة:', e.message)
         }
