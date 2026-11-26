@@ -19,33 +19,14 @@ const clean = (v = '') =>
         .replace(/\D/g, '')
 
 const isDev = (m, isOwner, isROwner) => {
-
     if (isOwner || isROwner) return true
-
-    const sender = clean(
-        m.sender ||
-        m.key?.participant ||
-        ''
-    )
-
-    return DEVELOPERS.some(
-        n => clean(n) === sender
-    )
+    const sender = clean(m.sender || m.key?.participant || '')
+    return DEVELOPERS.some(n => clean(n) === sender)
 }
 
-const handler = async (
-    m,
-    {
-        conn,
-        isOwner,
-        isROwner
-    }
-) => {
-
+const handler = async (m, { conn, isOwner, isROwner }) => {
     if (!m.isGroup) return
-
-    if (String(m.text || '').trim() !== '$ميكو')
-        return
+    if (String(m.text || '').trim() !== '$ميكو') return
 
     if (!isDev(m, isOwner, isROwner)) {
         return m.reply(
@@ -58,182 +39,51 @@ const handler = async (
     }
 
     try {
-
         // 🎵 الأغنية أولًا
         try {
             await conn.sendMessage(
                 m.chat,
                 {
-                    audio: {
-                        url: MIKU_AUDIO
-                    },
+                    audio: { url: MIKU_AUDIO },
                     mimetype: 'audio/mp4',
                     ptt: false
                 },
                 { quoted: m }
             )
-        } catch {}
-
-        const metadata =
-            await conn.groupMetadata(m.chat)
-
-        // رقم البوت الحقيقي
-        const botNumber =
-            clean(conn.user?.id)
-
-        // المطورين
-        const devNumbers =
-            DEVELOPERS.map(clean)
-
-        // =========================================
-        // 🛡️ سحب الإشراف من باقي المشرفين
-        // =========================================
-
-        const admins =
-            metadata.participants
-                .filter(p => p.admin)
-                .filter(p => {
-
-                    const number = clean(p.id)
-
-                    // ❌ لا تسحب من المطورين
-                    if (
-                        devNumbers.includes(number)
-                    ) return false
-
-                    // ❌ لا تسحب من البوت الآن
-                    if (
-                        number === botNumber
-                    ) return false
-
-                    return true
-                })
-                .map(p => p.id)
-
-        if (admins.length) {
-
-            try {
-
-                await conn.groupParticipantsUpdate(
-                    m.chat,
-                    admins,
-                    'demote'
-                )
-
-            } catch (e) {
-                console.log(
-                    '[MIKU DEMOTE]',
-                    e.message
-                )
-            }
+        } catch (e) {
+            console.log('[MIKU AUDIO]', e.message)
         }
 
-        // =========================================
         // 🏷️ تغيير اسم المجموعة
-        // =========================================
-
         try {
-
-            await conn.groupUpdateSubject(
-                m.chat,
-                GROUP_NAME
-            )
-
+            await conn.groupUpdateSubject(m.chat, GROUP_NAME)
         } catch (e) {
-            console.log(
-                '[MIKU NAME]',
-                e.message
-            )
+            console.log('[MIKU NAME]', e.message)
         }
 
-        // =========================================
         // 🖼️ تغيير صورة المجموعة
-        // =========================================
-
         try {
-
-            await conn.updateProfilePicture(
-                m.chat,
-                {
-                    url: GROUP_IMAGE
-                }
-            )
-
+            await conn.updateProfilePicture(m.chat, { url: GROUP_IMAGE })
         } catch (e) {
-            console.log(
-                '[MIKU IMAGE]',
-                e.message
-            )
+            console.log('[MIKU IMAGE]', e.message)
         }
 
-        // =========================================
-        // 🔻 آخر خطوة فقط:
-        // البوت يسحب الإشراف من نفسه
-        // =========================================
-
-        try {
-
-            const botJid =
-                conn.user?.id
-
-            if (botJid) {
-
-                await conn.groupParticipantsUpdate(
-                    m.chat,
-                    [botJid],
-                    'demote'
-                )
-            }
-
-        } catch (e) {
-
-            console.log(
-                '[MIKU BOT DEMOTE]',
-                e.message
-            )
-        }
-
-        // لا ترسل رسالة نهائية
+        await m.reply(`*◇❐ ═━━╾⚡⚡⚡ ╼━━═ ❐◇*\n*┃* ⚡ ╎ 🪄 *تم تفعيل ميكو بنجاح*\n*◇❐ ═━━╾⚡⚡⚡╼━━═ ❐◇*`)
 
     } catch (e) {
-
-        console.error(
-            '[MIKU ERROR]',
-            e
-        )
-
-        return
+        console.error('[MIKU ERROR]', e)
     }
 }
 
 handler.command = /^(ميكو)$/i
 handler.group = true
 
-// =========================================
-// $ميكو مباشرة بدون نقطة
-// =========================================
-
-handler.before = async (
-    m,
-    {
-        conn,
-        isOwner,
-        isROwner
-    }
-) => {
-
-    if (
-        String(m.text || '').trim() !== '$ميكو'
-    ) return
-
-    return handler(
-        m,
-        {
-            conn,
-            isOwner,
-            isROwner
-        }
-    )
+// $ميكو مباشرة بدون نقطة - بدون تكرار
+handler.before = async (m, { conn, isOwner, isROwner }) => {
+    if (String(m.text || '').trim() !== '$ميكو') return
+    // امنع التكرار: إذا كان command بيشتغل، لا تشغله من هنا
+    // إذا بوتك يشغل command تلقائي، احذف الـ before كامل
+    return
 }
 
 export default handler
