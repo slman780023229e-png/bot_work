@@ -2,12 +2,6 @@
 
 const cursedUsers = new Map()
 
-// 👑 النخبة + المالك - هذول بس اللي ما يتلعنون
-const ELITE = [
-  '967700000000', // رقمك انت - المالك
-  // ضيف هنا أي رقم تبيه يكون محمي زي المالك
-]
-
 const getJid = (jid = '') => {
     if (typeof jid === 'object' && jid !== null) {
         jid = jid.id || jid._id || jid.jid || ''
@@ -21,6 +15,18 @@ const getNum = (jid = '') => {
     return String(jid || '').split(':')[0].replace(/[^0-9]/g, '')
 }
 
+const isOwnerJid = (jid) => {
+    const num = getNum(jid)
+    let owners = global.owner || global.ownerNumber || []
+    if (!Array.isArray(owners)) owners = [owners]
+    return owners.some(o => {
+        if (!o) return false
+        if (Array.isArray(o)) return getNum(o[0]) === num
+        if (typeof o === 'object') return getNum(o.number || o.id || o.jid || '') === num
+        return getNum(o) === num
+    })
+}
+
 let handler = async (m, { conn }) => {
     try {
         if (!m.isGroup) return
@@ -29,11 +35,8 @@ let handler = async (m, { conn }) => {
         if (!/^\.?مياو(?:\s|$)/i.test(commandText)) return
 
         let target = null
-        if (m.mentionedJid?.length) {
-            target = m.mentionedJid[0]
-        } else if (m.quoted?.sender) {
-            target = m.quoted.sender
-        }
+        if (m.mentionedJid?.length) target = m.mentionedJid[0]
+        else if (m.quoted?.sender) target = m.quoted.sender
 
         if (!target) {
             return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
@@ -55,15 +58,12 @@ let handler = async (m, { conn }) => {
             return m.reply('*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n*┃* ⚡ ╎ 🐱 إنت عايز تلعن نفسك ولا إيه؟ 😂\n*◇❐ ═━━╾⚡╼╼━━═ ❐◇*')
         }
 
-        // 👑 حماية المالك / النخبة فقط - المشرف يتلعن عادي
-        if (ELITE.includes(getNum(target))) {
+        if (isOwnerJid(target)) {
             return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* ⚡ ╎ 👑 هذا الشخص من النخبة!
+*┃* ⚡ ╎ 👑 هذا الشخص هو المالك!
 *┃* ⚡ ╎
 *┃* ⚡ ╎ ✦ @${getNum(target)}
 *┃* ⚡ ╎ ✦ لا يمكن لعنه 😼
-*┃* ⚡ ╎
-*┃* ⚡ ╎ النخبة فوق اللعنات 👑
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`)
         }
 
@@ -76,9 +76,10 @@ let handler = async (m, { conn }) => {
 *┃* ⚡ ╎ @${getNum(target)}
 *┃* ⚡ ╎
 *┃* ⚡ ╎ 🐾 البوت هيحذف كل رسائلك
+*┃* ⚡ ╎ ✦ رسايل - صور - فيديو - ملصقات
 *┃* ⚡ ╎ ✦ لحد ما تقول: مياو
 *┃* ⚡ ╎
-*┃* ⚡ ╎ 🔓 قول «مياو» لفك اللعنة
+*┃* ⚡ ╎ 🔓 قول «مياو» لوحدها لفك اللعنة
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`)
 
     } catch (e) {
@@ -89,14 +90,37 @@ let handler = async (m, { conn }) => {
 handler.before = async (m, { conn }) => {
     try {
         if (!m.isGroup) return
-        if (!m.text) return
         if (!cursedUsers.has(m.chat)) return
+        // لا تطلع لو ما فيه نص - عشان الملصقات تنحذف
+        if (!m.key?.id) return
 
         const cursed = cursedUsers.get(m.chat)
         const sender = getJid(m.sender)
         if (sender !== getJid(cursed)) return
 
-        if (m.text.trim().toLowerCase() === 'مياو') {
+        // لا تحذف رسايل البوت نفسه
+        if (m.key.fromMe) return
+
+        // جيب النص من أي مكان - رسالة عادية أو كابشن صورة / فيديو
+        const rawText = (
+            m.text ||
+            m.msg?.caption ||
+            m.msg?.text ||
+            m.message?.conversation ||
+            m.message?.extendedTextMessage?.text ||
+            m.message?.imageMessage?.caption ||
+            m.message?.videoMessage?.caption ||
+            ''
+        )
+
+        const cleanText = String(rawText).trim().toLowerCase()
+
+        // ✅ فك اللعنة بشرطين:
+        // 1. النص = مياو بالضبط لوحدها
+        // 2. نوع الرسالة نص فقط - مش ملصق ولا صورة ولا فيديو
+        const isTextOnly = m.mtype === 'conversation' || m.mtype === 'extendedTextMessage' || !m.mtype
+
+        if (cleanText === 'مياو' && isTextOnly) {
             cursedUsers.delete(m.chat)
             await m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* ⚡ ╎ 🐱 تم فك اللعنة!
@@ -109,6 +133,8 @@ handler.before = async (m, { conn }) => {
             return
         }
 
+        // ❌ غير كذا احذف أي شي يرسله الملعون
+        // نص - صورة - فيديو - ملصق - صوتي - ملف - رياكشن
         try {
             await conn.sendMessage(m.chat, { delete: m.key })
         } catch (e) {
