@@ -3,9 +3,20 @@
 
 const cursedUsers = new Map()
 
+// 👑 هنا حط أرقام النخبة - بدون + وبدون مسافات
+const ELITE = [
+  '967700000000', // رقمك انت
+  '967711111111', // رقم صاحبك
+  // ضيف هنا أي رقم تبيه يكون من النخبة
+]
+
 const getJid = (jid = '') => {
     if (!jid) return ''
     return jid.split(':')[0].replace(/[^0-9]/g, '') + '@s.whatsapp.net'
+}
+
+const getNum = (jid = '') => {
+    return jid.split(':')[0].replace(/[^0-9]/g, '')
 }
 
 let handler = async (m, { conn, text }) => {
@@ -42,6 +53,32 @@ let handler = async (m, { conn, text }) => {
         if (target === sender) {
             return m.reply('*◇❐ ═━━╾⚡ ╼━━═ ❐◇*\n*┃* ⚡ ╎ 🐱 إنت عايز تلعن نفسك ولا إيه؟ 😂\n*◇❐ ═━━╾⚡╼╼━━═ ❐◇*')
         }
+
+        // 👑 حماية النخبة
+        if (ELITE.includes(getNum(target))) {
+            return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ⚡ ╎ 👑 هذا الشخص من النخبة!
+*┃* ⚡ ╎
+*┃* ⚡ ╎ ✦ @${target.split('@')[0]}
+*┃* ⚡ ╎ ✦ لا يمكن لعنه 😼
+*┃* ⚡ ╎
+*┃* ⚡ ╎ النخبة فوق اللعنات 👑
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`, { mentions: [target] })
+        }
+
+        // 👑 حماية مشرفين القروب
+        try {
+            const metadata = await conn.groupMetadata(m.chat)
+            const participant = metadata.participants.find(p => getJid(p.id) === target)
+            if (participant && (participant.admin === 'admin' || participant.admin === 'superadmin')) {
+                return m.reply(`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ⚡ ╎ 👑 هذا الشخص مشرف!
+*┃* ⚡ ╎
+*┃* ⚡ ╎ ✦ @${target.split('@')[0]}
+*┃* ⚡ ╎ ✦ المشرفين ما تنطبق عليهم اللعنة
+*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`, { mentions: [target] })
+            }
+        } catch {}
 
         cursedUsers.set(m.chat, target)
 
@@ -107,8 +144,9 @@ handler.before = async (m, { conn }) => {
     }
 }
 
-handler.command = /^(مياو)$/i
-handler.tags = ['fun']
 handler.help = ['مياو @منشن']
+handler.tags = ['owner']
+handler.command = /^(مياو)$/i
+handler.owner = true
 
 export default handler
