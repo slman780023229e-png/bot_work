@@ -17,12 +17,23 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
-const imageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
+const defaultImageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
+
+// إعدادات صور الأقسام مع نسبة قص الجزء السفلي (cropBottom)
+const SECTION_IMAGES = {
+    groups: { url: 'https://files.catbox.moe/yu3pvo.jpg', cropBottom: 0.15 },
+    download: { url: 'https://files.catbox.moe/is2shx.jpg', cropBottom: 0.15 },
+    games: { url: 'https://files.catbox.moe/81wrja.jpg', cropBottom: 0.15 },
+    system: { url: 'https://files.catbox.moe/od62an.jpg', cropBottom: 0.15 }
+}
 
 const CACHE_TTL = 30_000
 let cachedMenu = null
 let cachedAt = 0
-let cachedImgBuffer = null
+const rawImgCache = new Map()
+const processedImgCache = new Map()
+let sharpLib = null
+let sharpChecked = false
 
 const normalize = (value = '') => String(value)
     .trim()
@@ -32,39 +43,20 @@ const normalize = (value = '') => String(value)
     .replace(/\s+/g, ' ')
     .toLowerCase()
 
+const matchesAny = (text, list) => list.some(item => text.includes(item))
+
 const COMMAND_ALIASES = {
-    'بينتر': 'بنترست',
-    'بنتر': 'بنترست',
-    'بينترست': 'بنترست',
-    'بينتريست': 'بنترست',
-    'بنتريست': 'بنترست',
-    'بنتيرست': 'بنترست',
-    'بينتيرست': 'بنترست',
-    'بنتير': 'بنترست',
-    'بينتير': 'بنترست',
-    'pinterest': 'بنترست',
-    'pintrest': 'بنترست',
-    'pin': 'بنترست',
-    'pint': 'بنترست',
-    'pins': 'بنترست',
-    'تيكتوك': 'تيك توك',
-    'تيك': 'تيك توك',
-    'tiktok': 'تيك توك',
-    'انستا': 'انستقرام',
-    'انستغرام': 'انستقرام',
-    'instagram': 'انستقرام',
-    'فيس': 'فيسبوك',
-    'facebook': 'فيسبوك',
-    'يوتيوب': 'يوتيوب',
-    'youtube': 'يوتيوب',
-    'واتس': 'واتساب',
-    'whatsapp': 'واتساب',
-    'جوجل': 'جوجل',
-    'google': 'جوجل',
-    'نخبه': 'النخبه',
-    'النخبه': 'النخبه',
-    'نخبة': 'النخبه',
-    'النخبة': 'النخبه'
+    'بينتر': 'بنترست', 'بنتر': 'بنترست', 'بينترست': 'بنترست', 'بينتريست': 'بنترست',
+    'بنتريست': 'بنترست', 'بنتيرست': 'بنترست', 'بينتيرست': 'بنترست', 'بنتير': 'بنترست',
+    'بينتير': 'بنترست', 'pinterest': 'بنترست', 'pintrest': 'بنترست', 'pin': 'بنترست',
+    'pint': 'بنترست', 'pins': 'بنترست',
+    'تيكتوك': 'تيك توك', 'تيك': 'تيك توك', 'tiktok': 'تيك توك',
+    'انستا': 'انستقرام', 'انستغرام': 'انستقرام', 'instagram': 'انستقرام',
+    'فيس': 'فيسبوك', 'facebook': 'فيسبوك',
+    'يوتيوب': 'يوتيوب', 'youtube': 'يوتيوب',
+    'واتس': 'واتساب', 'whatsapp': 'واتساب',
+    'جوجل': 'جوجل', 'google': 'جوجل',
+    'نخبه': 'النخبه', 'النخبه': 'النخبه', 'نخبة': 'النخبه', 'النخبة': 'النخبه'
 }
 
 const getCanonicalCommand = (value = '') => {
@@ -74,99 +66,58 @@ const getCanonicalCommand = (value = '') => {
 
     const compact = n.replace(/\s+/g, '')
     if (
-        compact.startsWith('بنتر') ||
-        compact.startsWith('بينتر') ||
-        compact.startsWith('بنتير') ||
-        compact.startsWith('بينتير') ||
-        compact.includes('pinter') ||
-        compact === 'pint' ||
-        compact === 'pin'
-    ) {
-        return 'بنترست'
-    }
+        compact.startsWith('بنتر') || compact.startsWith('بينتر') ||
+        compact.startsWith('بنتير') || compact.startsWith('بينتير') ||
+        compact.includes('pinter') || compact === 'pint' || compact === 'pin'
+    ) return 'بنترست'
 
-    if (compact === 'نخبه' || compact === 'النخبه') {
-        return 'النخبه'
-    }
-
+    if (compact === 'نخبه' || compact === 'النخبه') return 'النخبه'
     return String(value).trim()
 }
 
 const getCommandKey = (value = '') => normalize(getCanonicalCommand(value)).replace(/\s+/g, '')
 
+const EMOJI_RULES = [
+    [['منشن'], '🎀'],
+    [['بوست'], '🪄'],
+    [['لينك', 'رابط'], '🔗'],
+    [['طرد', 'حظر', 'بان'], '🚫'],
+    [['اعفاء', 'ترقيه', 'مشرف'], '👤'],
+    [['نخبه'], '👑'],
+    [['تحويل'], '🔄'],
+    [['بنتر', 'تيك', 'انستا', 'فيس', 'يوتيوب', 'تحميل'], '📥'],
+    [['لعبه', 'تحدي', 'مسابقه', 'اكس', 'سؤال'], '🎮'],
+    [['ملصق', 'ستيكر'], '🖼️'],
+    [['ذكاء', 'ai', 'شات'], '🤖'],
+    [['اغاني', 'موسيقى', 'صوت'], '🎵'],
+    [['قران', 'اذكار', 'حديث', 'صلاه'], '🕌'],
+    [['مطور', 'ريستارت', 'تحديث'], '👑']
+]
+
 const getCommandEmoji = (cmd = '') => {
     const k = normalize(cmd)
-    if (k.includes('منشن')) return '🎀'
-    if (k.includes('بوست')) return '🪄'
-    if (k.includes('لينك') || k.includes('رابط')) return '🔗'
-    if (k.includes('طرد') || k.includes('حظر') || k.includes('بان')) return '🚫'
-    if (k.includes('اعفاء') || k.includes('ترقيه') || k.includes('مشرف')) return '👤'
-    if (k.includes('نخبه')) return '👑'
-    if (k.includes('تحويل')) return '🔄'
-    if (
-        k.includes('بنتر') ||
-        k.includes('تيك') ||
-        k.includes('انستا') ||
-        k.includes('فيس') ||
-        k.includes('يوتيوب') ||
-        k.includes('تحميل')
-    ) return '📥'
-    if (
-        k.includes('لعبه') ||
-        k.includes('تحدي') ||
-        k.includes('مسابقه') ||
-        k.includes('اكس') ||
-        k.includes('سؤال')
-    ) return '🎮'
-    if (k.includes('ملصق') || k.includes('ستيكر')) return '🖼️'
-    if (k.includes('ذكاء') || k.includes('ai') || k.includes('شات')) return '🤖'
-    if (k.includes('اغاني') || k.includes('موسيقى') || k.includes('صوت')) return '🎵'
-    if (k.includes('قران') || k.includes('اذكار') || k.includes('حديث') || k.includes('صلاه')) return '🕌'
-    if (k.includes('مطور') || k.includes('ريستارت') || k.includes('تحديث')) return '👑'
-    return '⚡'
+    const found = EMOJI_RULES.find(([keys]) => matchesAny(k, keys))
+    return found ? found[1] : '⚡'
 }
 
 const CATEGORY_ALIASES = {
-    group: 'إدارة المجموعات',
-    groups: 'إدارة المجموعات',
-    admin: 'إدارة المجموعات',
-    administration: 'إدارة المجموعات',
-    moderation: 'إدارة المجموعات',
-    downloader: 'التحميلات',
-    download: 'التحميلات',
-    games: 'الألعاب',
-    game: 'الألعاب',
-    fun: 'الترفيه',
-    entertainment: 'الترفيه',
-    unions: 'النقابات',
-    guild: 'النقابات',
-    tools: 'الأدوات',
-    tool: 'الأدوات',
-    sticker: 'الأدوات',
+    group: 'إدارة المجموعات', groups: 'إدارة المجموعات', admin: 'إدارة المجموعات',
+    administration: 'إدارة المجموعات', moderation: 'إدارة المجموعات',
+    downloader: 'التحميلات', download: 'التحميلات',
+    games: 'الألعاب', game: 'الألعاب',
+    fun: 'الترفيه', entertainment: 'الترفيه',
+    unions: 'النقابات', guild: 'النقابات',
+    tools: 'الأدوات', tool: 'الأدوات', sticker: 'الأدوات',
     ai: 'الذكاء الاصطناعي',
-    owner: 'المطور',
-    dev: 'المطور',
-    main: 'النظام',
-    system: 'النظام',
-    music: 'الموسيقى',
-    islamic: 'الإسلامي',
-    community: 'المجتمع'
+    owner: 'المطور', dev: 'المطور',
+    main: 'النظام', system: 'النظام',
+    music: 'الموسيقى', islamic: 'الإسلامي', community: 'المجتمع'
 }
 
 const CATEGORY_ORDER = [
-    'إدارة المجموعات',
-    'التحميلات',
-    'الألعاب',
-    'الترفيه',
-    'النقابات',
-    'الأدوات',
-    'الذكاء الاصطناعي',
-    'الموسيقى',
-    'الإسلامي',
-    'المجتمع',
-    'المطور',
-    'النظام',
-    'أخرى'
+    'إدارة المجموعات', 'التحميلات', 'الألعاب', 'الترفيه', 'النقابات',
+    'الأدوات', 'الذكاء الاصطناعي', 'الموسيقى', 'الإسلامي', 'المجتمع',
+    'المطور', 'النظام', 'أخرى'
 ]
 
 const getCategory = (plugin) => {
@@ -177,39 +128,33 @@ const getCategory = (plugin) => {
     return CATEGORY_ALIASES[normalize(value)] || value
 }
 
-const getIcon = (category) => {
+const CATEGORY_META = [
+    { keys: ['مجموع', 'ادار', 'حماي'], icon: '🛡️', desc: 'إدارة المجموعات وحمايتها', img: SECTION_IMAGES.groups },
+    { keys: ['تحميل'], icon: '📥', desc: 'تحميل الصور والفيديوهات والملفات', img: SECTION_IMAGES.download },
+    { keys: ['العاب'], icon: '🎮', desc: 'ألعاب وتحديات ومسابقات', img: SECTION_IMAGES.games },
+    { keys: ['ترفيه'], icon: '🎭', desc: 'أوامر المرح والتفاعل', img: SECTION_IMAGES.games },
+    { keys: ['نقاب'], icon: '👑', desc: 'إدارة الألقاب والنقابات', img: SECTION_IMAGES.groups },
+    { keys: ['ادوات'], icon: '🛠️', desc: 'أدوات ومميزات البوت', img: SECTION_IMAGES.download },
+    { keys: ['ذكاء'], icon: '🤖', desc: 'أدوات الذكاء الاصطناعي', img: SECTION_IMAGES.system },
+    { keys: ['موسيقى'], icon: '🎵', desc: 'الأغاني والصوتيات', img: SECTION_IMAGES.download },
+    { keys: ['اسلام'], icon: '🕌', desc: 'أوامر وخدمات إسلامية', img: SECTION_IMAGES.games },
+    { keys: ['مجتمع'], icon: '🌐', desc: 'روابط ومجتمع البوت', img: SECTION_IMAGES.groups },
+    { keys: ['مطور'], icon: '👑', desc: 'أوامر المطور والإدارة', img: SECTION_IMAGES.system },
+    { keys: ['نظام'], icon: '⭐', desc: 'معلومات وخدمات النظام', img: SECTION_IMAGES.system }
+]
+
+const getCategoryMeta = (category) => {
     const key = normalize(category)
-    if (key.includes('مجموع') || key.includes('ادار') || key.includes('حماي')) return '🛡️'
-    if (key.includes('تحميل')) return '📥'
-    if (key.includes('العاب')) return '🎮'
-    if (key.includes('ترفيه')) return '🎭'
-    if (key.includes('نقاب')) return '👑'
-    if (key.includes('ادوات')) return '🛠️'
-    if (key.includes('ذكاء')) return '🤖'
-    if (key.includes('موسيقى')) return '🎵'
-    if (key.includes('اسلام')) return '🕌'
-    if (key.includes('مجتمع')) return '🌐'
-    if (key.includes('مطور')) return '👑'
-    if (key.includes('نظام')) return '⭐'
-    return '📂'
+    return CATEGORY_META.find(item => matchesAny(key, item.keys)) || {
+        icon: '📂',
+        desc: 'الأوامر المتاحة في هذا القسم',
+        img: SECTION_IMAGES.system
+    }
 }
 
-const getCategoryDescription = (category) => {
-    const key = normalize(category)
-    if (key.includes('مجموع')) return 'إدارة المجموعات وحمايتها'
-    if (key.includes('تحميل')) return 'تحميل الصور والفيديوهات والملفات'
-    if (key.includes('العاب')) return 'ألعاب وتحديات ومسابقات'
-    if (key.includes('ترفيه')) return 'أوامر المرح والتفاعل'
-    if (key.includes('نقاب')) return 'إدارة الألقاب والنقابات'
-    if (key.includes('ادوات')) return 'أدوات ومميزات البوت'
-    if (key.includes('ذكاء')) return 'أدوات الذكاء الاصطناعي'
-    if (key.includes('موسيقى')) return 'الأغاني والصوتيات'
-    if (key.includes('اسلام')) return 'أوامر وخدمات إسلامية'
-    if (key.includes('مطور')) return 'أوامر المطور والإدارة'
-    if (key.includes('نظام')) return 'معلومات وخدمات النظام'
-    if (key.includes('مجتمع')) return 'روابط ومجتمع البوت'
-    return 'الأوامر المتاحة في هذا القسم'
-}
+const getIcon = (category) => getCategoryMeta(category).icon
+const getCategoryDescription = (category) => getCategoryMeta(category).desc
+const getCategoryImage = (category) => getCategoryMeta(category).img
 
 const scanPluginFiles = (directory, result = []) => {
     let entries = []
@@ -249,11 +194,12 @@ const commandsFromPattern = (pattern) => {
     let source = pattern.source
     if (!source || source === '(?:)') return []
 
-    source = source.replace(/^\^/, '').replace(/\$$/, '')
-    source = source.replace(/^\(\?:/, '').replace(/\)$/, '')
-    source = source.replace(/\\d\+/g, ' رقم')
-    source = source.replace(/\\s\*/g, ' ')
-    source = source.replace(/\\-/g, '-')
+    source = source
+        .replace(/^\^/, '').replace(/\$$/, '')
+        .replace(/^\(\?:/, '').replace(/\)$/, '')
+        .replace(/\\d\+/g, ' رقم')
+        .replace(/\\s\*/g, ' ')
+        .replace(/\\-/g, '-')
 
     return source.split('|')
         .map(part => part
@@ -270,20 +216,13 @@ const commandsFromPattern = (pattern) => {
 
 // يضمن إرجاع أمر واحد فقط لكل ملف بلجن
 const getPluginCommands = (plugin, fileName) => {
-    let candidates = []
-
-    if (Array.isArray(plugin?.help)) {
-        candidates.push(...plugin.help)
-    }
+    const candidates = []
+    if (Array.isArray(plugin?.help)) candidates.push(...plugin.help)
 
     const raw = plugin?.command
-    if (Array.isArray(raw)) {
-        candidates.push(...raw)
-    } else if (typeof raw === 'string') {
-        candidates.push(raw)
-    } else if (raw instanceof RegExp) {
-        candidates.push(...commandsFromPattern(raw))
-    }
+    if (Array.isArray(raw)) candidates.push(...raw)
+    else if (typeof raw === 'string') candidates.push(raw)
+    else if (raw instanceof RegExp) candidates.push(...commandsFromPattern(raw))
 
     if (plugin?.customPrefix instanceof RegExp) {
         candidates.push(...commandsFromPattern(plugin.customPrefix))
@@ -292,13 +231,9 @@ const getPluginCommands = (plugin, fileName) => {
     const cleaned = []
     for (const item of candidates) {
         const command = getCanonicalCommand(cleanCommand(item))
-        if (!command || command.length > 45) continue
-        if (/^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
+        if (!command || command.length > 45 || /^(?:ق\s*\d+|اوامر|قسم)$/i.test(command)) continue
         const key = getCommandKey(command)
-        if (!key) continue
-        if (!cleaned.some(c => getCommandKey(c) === key)) {
-            cleaned.push(command)
-        }
+        if (key && !cleaned.some(c => getCommandKey(c) === key)) cleaned.push(command)
     }
 
     if (!cleaned.length && plugin && ['object', 'function'].includes(typeof plugin) && fileName) {
@@ -310,8 +245,7 @@ const getPluginCommands = (plugin, fileName) => {
     if (cleaned.length === 1) return [cleaned[0]]
 
     const canonicalValues = new Set(Object.values(COMMAND_ALIASES))
-    const preferred = cleaned.find(c => canonicalValues.has(c))
-    return [preferred || cleaned[0]]
+    return [cleaned.find(c => canonicalValues.has(c)) || cleaned[0]]
 }
 
 const getMenuData = async (force = false) => {
@@ -325,8 +259,7 @@ const getMenuData = async (force = false) => {
         try {
             const stat = fs.statSync(fullPath)
             const moduleUrl = `${pathToFileURL(fullPath).href}?menu=${stat.mtimeMs}`
-            const imported = await import(moduleUrl)
-            const plugin = imported?.default
+            const plugin = (await import(moduleUrl))?.default
 
             if (!plugin || !['object', 'function'].includes(typeof plugin)) continue
             if (!plugin.command && !plugin.customPrefix) continue
@@ -341,9 +274,7 @@ const getMenuData = async (force = false) => {
             for (const rawCommand of commands) {
                 const command = getCanonicalCommand(rawCommand)
                 const key = getCommandKey(command)
-                if (!key) continue
-
-                if (!bucket.has(key)) {
+                if (key && !bucket.has(key)) {
                     bucket.set(key, {
                         command,
                         description: plugin.description || plugin.desc || 'أمر من أوامر البوت'
@@ -371,12 +302,11 @@ const getMenuData = async (force = false) => {
             name,
             icon: getIcon(name),
             description: getCategoryDescription(name),
+            image: getCategoryImage(name),
             commands: [...categories.get(name).values()]
                 .sort((a, b) => a.command.localeCompare(b.command, 'ar'))
         })),
-        totalCommands: orderedCategories.reduce(
-            (sum, name) => sum + categories.get(name).size, 0
-        )
+        totalCommands: orderedCategories.reduce((sum, name) => sum + categories.get(name).size, 0)
     }
 
     cachedMenu = result
@@ -389,10 +319,8 @@ const unwrapMessage = (message, depth = 0) => {
     if (message.interactiveResponseMessage || message.listResponseMessage) return message
 
     const wrappers = [
-        'ephemeralMessage',
-        'viewOnceMessage',
-        'viewOnceMessageV2',
-        'documentWithCaptionMessage'
+        'ephemeralMessage', 'viewOnceMessage',
+        'viewOnceMessageV2', 'documentWithCaptionMessage'
     ]
 
     for (const key of wrappers) {
@@ -409,16 +337,11 @@ const getSelectedId = (m) => {
     const rowId = message?.listResponseMessage?.singleSelectReply?.selectedRowId
     if (rowId) return String(rowId).trim()
 
-    const paramsJson =
-        message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
-
+    const paramsJson = message?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson
     if (paramsJson) {
         try {
             const params = JSON.parse(paramsJson)
-            const selected = params.id ||
-                params.row_id ||
-                params.selectedRowId ||
-                params.selected_row_id
+            const selected = params.id || params.row_id || params.selectedRowId || params.selected_row_id
             if (selected) return String(selected).trim()
         } catch {}
     }
@@ -432,85 +355,140 @@ const findCategory = (menu, name) => {
     return menu.categories.find(item => normalize(item.name) === wanted)
 }
 
-const loadImageBuffer = async (url) => {
-    if (cachedImgBuffer) return cachedImgBuffer
+const getSharp = async () => {
+    if (sharpChecked) return sharpLib
+    sharpChecked = true
+    try {
+        const mod = await import('sharp')
+        sharpLib = mod?.default || mod
+    } catch {
+        sharpLib = null
+    }
+    return sharpLib
+}
+
+const loadRawImageBuffer = async (url) => {
+    if (!url) return null
+    if (rawImgCache.has(url)) return rawImgCache.get(url)
     try {
         const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
         if (!response.ok) return null
         const buf = Buffer.from(await response.arrayBuffer())
         if (!buf.length) return null
-        cachedImgBuffer = buf
+        rawImgCache.set(url, buf)
         return buf
     } catch {
         return null
     }
 }
 
-// إرسال رسالة القسم مع زرّين مضمونين تحت كل قسم
-const sendSectionCard = async (conn, m, body, prefix = '.') => {
-    const imgBuf = await loadImageBuffer(imageUrl)
+// قص الجزء السفلي وتصغير/تأطير الصورة ليظهر الجزء العلوي بشكل مرتب
+const frameSectionImage = async (rawBuf, cropBottom = 0.15, width = 800, height = 560) => {
+    if (!rawBuf?.length) return null
+    const sharp = await getSharp()
+    if (!sharp) return rawBuf
+
+    try {
+        const meta = await sharp(rawBuf).metadata()
+        const srcW = meta.width || 0
+        const srcH = meta.height || 0
+        let pipeline = sharp(rawBuf)
+
+        if (srcW > 0 && srcH > 0) {
+            const safeRatio = Math.min(Math.max(Number(cropBottom) || 0, 0), 0.45)
+            const keepH = Math.max(1, Math.round(srcH * (1 - safeRatio)))
+            pipeline = pipeline.extract({ left: 0, top: 0, width: srcW, height: keepH })
+        }
+
+        return await pipeline
+            .resize(width, height, { fit: 'cover', position: 'top' })
+            .jpeg({ quality: 82, mozjpeg: true })
+            .toBuffer()
+    } catch {
+        return rawBuf
+    }
+}
+
+const loadSectionBuffer = async (imgConfig) => {
+    const cfg = typeof imgConfig === 'string'
+        ? { url: imgConfig, cropBottom: 0.15 }
+        : (imgConfig || { url: defaultImageUrl, cropBottom: 0.15 })
+
+    const targetUrl = cfg.url || defaultImageUrl
+    const cropRatio = cfg.cropBottom ?? 0.15
+    const cacheKey = `${targetUrl}|${cropRatio}`
+
+    if (processedImgCache.has(cacheKey)) return processedImgCache.get(cacheKey)
+
+    const raw = await loadRawImageBuffer(targetUrl) || await loadRawImageBuffer(defaultImageUrl)
+    if (!raw) return null
+
+    const framed = await frameSectionImage(raw, cropRatio)
+    const finalBuf = framed || raw
+    processedImgCache.set(cacheKey, finalBuf)
+    return finalBuf
+}
+
+const loadHeaderMediaFromBuffer = async (conn, buffer) => {
+    try {
+        if (!buffer?.length) return null
+        const uploadFn = conn.waUploadToServer || conn.uploadFile
+        const uploadOpts = typeof uploadFn === 'function' ? { upload: uploadFn.bind(conn) } : {}
+        return await prepareWAMessageMedia({ image: buffer }, uploadOpts)
+    } catch (error) {
+        console.log('[اوامر] تعذر تجهيز الصورة:', error.message)
+        return null
+    }
+}
+
+const buildQuickReplyButtons = (prefix = '.') => [
+    { display: '📂 الـقـائـمـة', id: `${prefix}اوامر` },
+    { display: '👑 تـنـصـيـب', id: `${prefix}تنصيب` }
+]
+
+// إرسال رسالة القسم مع صورة مقصوصة من الأسفل ومصغّرة + زرّين مضمونين تحته
+const sendSectionCard = async (conn, m, body, prefix = '.', sectionImg = SECTION_IMAGES.system) => {
+    const imgBuf = await loadSectionBuffer(sectionImg) || await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.15 })
+    const buttons = buildQuickReplyButtons(prefix)
 
     if (typeof ButtonV2 === 'function') {
-        try {
-            const card = new ButtonV2(conn)
-                .setBody(body)
-                .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
-            if (imgBuf && typeof card.setThumbnail === 'function') {
-                card.setThumbnail(imgBuf)
-            }
-            if (typeof card.addButton === 'function') {
-                card.addButton('📂 الـقـائـمـة', `${prefix}اوامر`)
-                card.addButton('👑 تـنـصـيـب', `${prefix}تنصيب`)
-            }
-            return await card.send(m.chat)
-        } catch {}
-
-        // محاولة ثانية بدون صورة لو فشل التحميل داخل ButtonV2
-        try {
-            const cardNoImg = new ButtonV2(conn)
-                .setBody(body)
-                .setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
-            if (typeof cardNoImg.addButton === 'function') {
-                cardNoImg.addButton('📂 الـقـائـمـة', `${prefix}اوامر`)
-                cardNoImg.addButton('👑 تـنـصـيـب', `${prefix}تنصيب`)
-            }
-            return await cardNoImg.send(m.chat)
-        } catch {}
+        const attempts = [imgBuf, null]
+        for (const thumb of attempts) {
+            try {
+                const card = new ButtonV2(conn).setBody(body).setFooter('© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓')
+                if (thumb && typeof card.setThumbnail === 'function') card.setThumbnail(thumb)
+                if (typeof card.addButton === 'function') {
+                    for (const btn of buttons) card.addButton(btn.display, btn.id)
+                }
+                return await card.send(m.chat)
+            } catch {}
+        }
     }
 
-    // بديل أزرار quick_reply عبر interactiveMessage إذا لم يرسل ButtonV2
     try {
+        const media = await loadHeaderMediaFromBuffer(conn, imgBuf)
+        const interactive = {
+            body: { text: body },
+            footer: { text: '© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓' },
+            nativeFlowMessage: {
+                buttons: buttons.map(btn => ({
+                    name: 'quick_reply',
+                    buttonParamsJson: JSON.stringify({ display_text: btn.display, id: btn.id })
+                })),
+                messageParamsJson: ''
+            }
+        }
+        if (media?.imageMessage) {
+            interactive.header = {
+                title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓',
+                hasMediaAttachment: true,
+                imageMessage: media.imageMessage
+            }
+        }
+
         const msg = generateWAMessageFromContent(
             m.chat,
-            {
-                viewOnceMessage: {
-                    message: {
-                        interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                            body: { text: body },
-                            footer: { text: '© 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓' },
-                            nativeFlowMessage: {
-                                buttons: [
-                                    {
-                                        name: 'quick_reply',
-                                        buttonParamsJson: JSON.stringify({
-                                            display_text: '📂 الـقـائـمـة',
-                                            id: `${prefix}اوامر`
-                                        })
-                                    },
-                                    {
-                                        name: 'quick_reply',
-                                        buttonParamsJson: JSON.stringify({
-                                            display_text: '👑 تـنـصـيـب',
-                                            id: `${prefix}تنصيب`
-                                        })
-                                    }
-                                ],
-                                messageParamsJson: ''
-                            }
-                        })
-                    }
-                }
-            },
+            { viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject(interactive) } } },
             { userJid: conn?.user?.jid || conn?.user?.id, quoted: m }
         )
         return await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
@@ -529,7 +507,7 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 *┃* 🚫 ╎ القسم "${categoryName}" غير موجود
 *┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
-        return await sendSectionCard(conn, m, notFoundBody, usedPrefix)
+        return await sendSectionCard(conn, m, notFoundBody, usedPrefix, { url: defaultImageUrl, cropBottom: 0.15 })
     }
 
     const cmdLines = category.commands
@@ -538,30 +516,11 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 
     const body =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ${category.icon} ╎ قسم: *${category.name}*
 ${cmdLines}
 *◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
 
-    return await sendSectionCard(conn, m, body, usedPrefix)
-}
-
-const loadHeaderMedia = async (conn, url) => {
-    try {
-        const buffer = await loadImageBuffer(url)
-        if (!buffer?.length) return null
-
-        const uploadFn = conn.waUploadToServer || conn.uploadFile
-        if (typeof uploadFn === 'function') {
-            return await prepareWAMessageMedia(
-                { image: buffer },
-                { upload: uploadFn.bind(conn) }
-            )
-        }
-
-        return await prepareWAMessageMedia({ image: buffer }, {})
-    } catch (error) {
-        console.log('[اوامر] تعذر تجهيز صورة القائمة:', error.message)
-        return null
-    }
+    return await sendSectionCard(conn, m, body, usedPrefix, category.image)
 }
 
 const handler = async (m, { conn, usedPrefix }) => {
@@ -579,9 +538,7 @@ const handler = async (m, { conn, usedPrefix }) => {
         }
 
         try {
-            await conn.sendMessage(m.chat, {
-                react: { text: '⚡', key: m.key }
-            })
+            await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } })
         } catch {}
 
         let user = 'صديقي'
@@ -597,7 +554,8 @@ const handler = async (m, { conn, usedPrefix }) => {
             }, { quoted: m })
         }
 
-        const media = await loadHeaderMedia(conn, imageUrl)
+        const headerBuf = await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.12 })
+        const media = await loadHeaderMediaFromBuffer(conn, headerBuf)
 
         const bodyText =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
@@ -637,10 +595,7 @@ const handler = async (m, { conn, usedPrefix }) => {
                 buttons: [
                     {
                         name: 'single_select',
-                        buttonParamsJson: JSON.stringify({
-                            title: '📂 قائمة الأقسام',
-                            sections
-                        })
+                        buttonParamsJson: JSON.stringify({ title: '📂 قائمة الأقسام', sections })
                     },
                     {
                         name: 'cta_url',
@@ -672,22 +627,11 @@ const handler = async (m, { conn, usedPrefix }) => {
 
         const outgoing = generateWAMessageFromContent(
             m.chat,
-            {
-                viewOnceMessage: {
-                    message: {
-                        interactiveMessage: proto.Message.InteractiveMessage.fromObject(interactiveMessage)
-                    }
-                }
-            },
-            {
-                userJid: conn?.user?.jid || conn?.user?.id,
-                quoted: m
-            }
+            { viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject(interactiveMessage) } } },
+            { userJid: conn?.user?.jid || conn?.user?.id, quoted: m }
         )
 
-        return await conn.relayMessage(m.chat, outgoing.message, {
-            messageId: outgoing.key.id
-        })
+        return await conn.relayMessage(m.chat, outgoing.message, { messageId: outgoing.key.id })
     } catch (error) {
         console.error('❌ ARTHUR BOT MENU ERROR:', error)
         return m.reply('❌ حصل خطأ أثناء فتح قائمة ARTHUR BOT.')
