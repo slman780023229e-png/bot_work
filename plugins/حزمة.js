@@ -173,35 +173,52 @@ async function downloadImage(url) {
 // IMAGE CONVERSION
 // ================================================
 
+// كل ملصق مربع 512x512
+// الصورة تملأ كامل المساحة بدون هوامش
+// يتم قص الزوائد للحفاظ على الشكل المربع
+
 async function makeSticker(buffer) {
-  return sharp(buffer, { animated: false })
+  return sharp(buffer, {
+    animated: false,
+    limitInputPixels: 40000000
+  })
     .rotate()
     .resize(512, 512, {
-      fit: 'contain',
-      background: {
-        r: 0,
-        g: 0,
-        b: 0,
-        alpha: 0
-      }
+      fit: 'cover',
+      position: 'attention',
+      withoutEnlargement: false,
+      kernel: 'lanczos3'
     })
     .webp({
       quality: 65,
-      effort: 4
+      effort: 5,
+      smartSubsample: true,
+      alphaQuality: 100
     })
     .toBuffer()
 }
 
+// ================================================
+// TRAY + THUMBNAIL
+// ================================================
+
 async function makeTray(buffer) {
   return sharp(buffer)
-    .resize(96, 96, { fit: 'cover' })
+    .rotate()
+    .resize(96, 96, {
+      fit: 'cover',
+      position: 'attention'
+    })
     .webp({ quality: 75 })
     .toBuffer()
 }
 
 async function makeThumbnail(buffer) {
   return sharp(buffer)
-    .resize(252, 252, { fit: 'cover' })
+    .resize(252, 252, {
+      fit: 'cover',
+      position: 'attention'
+    })
     .jpeg({ quality: 80 })
     .toBuffer()
 }
@@ -387,7 +404,6 @@ async function createStickerArchive(stickers, tray) {
     })
   }
 
-  // إضافة أيقونة الغلاف داخل الأرشيف
   zip.file('tray_icon.webp', tray)
 
   const archive = await zip.generateAsync({
@@ -403,7 +419,6 @@ async function createStickerArchive(stickers, tray) {
 // ================================================
 
 async function sendStickerPack(conn, jid, query, stickers) {
-  // إنشاء الغلاف أولًا وإضافته للأرشيف
   const tray = await makeTray(stickers[0])
 
   const { archive, metadata } = await createStickerArchive(
