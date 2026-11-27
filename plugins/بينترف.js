@@ -1,11 +1,13 @@
 // plugins/بينترف.js
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Pinterest Videos - مضمون + اسرع ✅
+
 import axios from 'axios'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { unlinkSync, existsSync, statSync, writeFileSync, readFileSync } from 'fs'
+import { unlinkSync, existsSync, statSync, writeFileSync, readFileSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import ffmpegStatic from 'ffmpeg-static' // <-- الاضافة هنا
+import ffmpegStatic from 'ffmpeg-static'
 import {
   proto,
   generateWAMessageFromContent,
@@ -38,7 +40,8 @@ async function getPinterestCookies() {
    } catch { return null }
 }
 
-async function searchPinterestVideos(query, needed = 10) {
+// ===== بحث واسع مثل القديم - يجيب كثير =====
+async function searchPinterestVideos(query, needed = 15) {
    const videos = []
    const cookies = await getPinterestCookies()
    if (!cookies) return videos
@@ -91,29 +94,34 @@ async function searchPinterestVideos(query, needed = 10) {
    return videos.slice(0, needed)
 }
 
+// ===== تحويل سريع مضمون - remux 1 ثانية =====
 async function convertForWhatsApp(inputPath, outputPath) {
+   const ffmpegPath = ffmpegStatic
+   if (!ffmpegPath || !existsSync(ffmpegPath)) {
+      console.log('⚠️ ffmpeg-static مو موجود')
+      return false
+   }
+
+   // 1. remux سريع - 1 ثانية، يكفي 90% من الفيديوهات
    try {
-      const ffmpegPath = ffmpegStatic
-      if (!ffmpegPath || !existsSync(ffmpegPath)) {
-         const { copyFileSync } = await import('fs')
-         copyFileSync(inputPath, outputPath)
-         return existsSync(outputPath) && statSync(outputPath).size > 10000
-      }
-      const cmd = `"${ffmpegPath}" -y -i "${inputPath}" -c:v libx264 -preset veryfast -crf 28 -c:a aac -b:a 128k -movflags +faststart -vf "scale='min(720,iw)':-2" "${outputPath}"`
-      await execAsync(cmd, { timeout: 90000 })
+      await execAsync(`"${ffmpegPath}" -y -i "${inputPath}" -c copy -movflags +faststart "${outputPath}"`, { timeout: 30000 })
       if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
-   } catch (e) { console.log('ffmpeg fail:', e.message) }
+   } catch { try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
+
+   // 2. اعادة ترميز خفيفة - بس اذا remux فشل
    try {
-      const { copyFileSync } = await import('fs')
-      copyFileSync(inputPath, outputPath)
-      return existsSync(outputPath) && statSync(outputPath).size > 10000
-   } catch { return false }
+      await execAsync(`"${ffmpegPath}" -y -i "${inputPath}" -c:v libx264 -preset ultrafast -crf 30 -c:a aac -b:a 96k -movflags +faststart -vf "scale='min(720,iw)':-2" "${outputPath}"`, { timeout: 60000 })
+      if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
+   } catch (e) { console.log('❌ تحويل فشل:', e.message.slice(0, 120)); try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
+
+   return false
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   const react = async (emoji) => {
     try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
   }
+
   if (!text) {
     return m.reply(theme.build([
       { type: 'title', text: '🎬 Pinterest Videos - ARTHUR BOT' },
@@ -122,16 +130,18 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو` }
     ]))
   }
+
+  // تحميل من رابط
   if (text.includes('pin.it') || text.includes('pinterest.com/pin/')) {
     await react('⏳')
     await m.reply('⏳ جاري تحميل الفيديو...')
     try {
       const rawPath = join(tmpdir(), `pin_raw_${Date.now()}.mp4`)
       const finalPath = join(tmpdir(), `pin_${Date.now()}.mp4`)
-      const cmd = `${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" -o "${rawPath}" "${text}"`
-      await execAsync(cmd, { timeout: 120000 })
+      await execAsync(`${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" -o "${rawPath}" "${text}"`, { timeout: 120000 })
       if (!existsSync(rawPath)) throw new Error('فشل')
-      await convertForWhatsApp(rawPath, finalPath)
+      let ok = await convertForWhatsApp(rawPath, finalPath)
+      if (!ok) copyFileSync(rawPath, finalPath)
       try { unlinkSync(rawPath) } catch {}
       await conn.sendMessage(m.chat, { video: { url: finalPath }, mimetype: 'video/mp4', caption: `✅ تم التحميل\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }, { quoted: m })
       await react('✅')
@@ -139,36 +149,58 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     } catch (e) { console.log(e.message); await react('❌'); m.reply('❌ فشل التحميل') }
     return
   }
+
   await react('🔍')
   await m.reply('🎬 جاري البحث...')
+
   try {
-    const videos = await searchPinterestVideos(text, 10)
+    const videos = await searchPinterestVideos(text, 15)
     if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات\nجرب كلمة ثانية') }
-    await m.reply(`✅ لقيت ${videos.length} فيديو، جاري التحويل...`)
+
+    await m.reply(`✅ لقيت ${videos.length} فيديو، جاري التحويل السريع...`)
+
     let cards = []
-    for (let i = 0; i < videos.length; i++) {
+    // نوقف عند 10، حتى لو جبنا 15
+    for (let i = 0; i < videos.length && cards.length < 10; i++) {
       let v = videos[i]
       let rawPath = join(tmpdir(), `raw_${Date.now()}_${i}.mp4`)
       let finalPath = join(tmpdir(), `final_${Date.now()}_${i}.mp4`)
       try {
+        // لو m3u8 نحوله مباشرة بـ ffmpeg
         if (v.videoUrl.includes('.m3u8')) {
           let ok = await convertForWhatsApp(v.videoUrl, finalPath)
-          if (!ok) continue
+          if (!ok) { console.log(`❌ فيديو ${i+1} m3u8 فشل`); continue }
         } else {
           const vidRes = await axios.get(v.videoUrl, {
             responseType: 'arraybuffer',
             headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pinterest.com/' },
-            timeout: 30000, maxContentLength: 60 * 1024 * 1024
+            timeout: 25000, maxContentLength: 50 * 1024 * 1024
           })
           writeFileSync(rawPath, Buffer.from(vidRes.data))
           if (statSync(rawPath).size < 5000) { try { unlinkSync(rawPath) } catch {}; continue }
+
           let ok = await convertForWhatsApp(rawPath, finalPath)
-          if (!ok) continue
+          if (!ok) {
+            // اذا فشل التحويل، ارسل الاصلي، لا تتخطاه
+            console.log(`⚠️ فيديو ${i+1} فشل تحويله، بنرسل الاصلي`)
+            try { copyFileSync(rawPath, finalPath) } catch { continue }
+          }
         }
-        if (statSync(finalPath).size > 12 * 1024 * 1024) { try { unlinkSync(finalPath) } catch {}; continue }
+
+        // اذا اكبر من 16MB نتخطاه، واتساب ما يقبله في الكروسيل
+        if (!existsSync(finalPath) || statSync(finalPath).size < 5000) continue
+        if (statSync(finalPath).size > 16 * 1024 * 1024) {
+          console.log(`⚠️ فيديو ${i+1} كبير ${(statSync(finalPath).size/1024/1024).toFixed(1)} MB`)
+          continue
+        }
+
         let buffer = readFileSync(finalPath)
+        // تأكد انه مو صورة
+        if ((buffer[0] === 0xFF && buffer[1] === 0xD8) || buffer.slice(1,4).toString() === 'PNG') continue
+
         const { videoMessage } = await generateWAMessageContent({ video: buffer }, { upload: conn.waUploadToServer })
         if (!videoMessage) continue
+
         cards.push({
           body: proto.Message.InteractiveMessage.Body.fromObject({ text: `🎬 فيديو ${cards.length + 1} | 🔎 ${text}` }),
           header: proto.Message.InteractiveMessage.Header.fromObject({ hasMediaAttachment: true, videoMessage }),
@@ -179,13 +211,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             ]
           })
         })
-      } catch (e) { console.log(`فشل فيديو ${i+1}:`, e.message); continue
+        console.log(`✅ فيديو ${cards.length} جاهز`)
+
+      } catch (e) {
+        console.log(`❌ فيديو ${i+1} فشل:`, e.message.slice(0, 120))
+        continue
       } finally {
         try { if (existsSync(rawPath)) unlinkSync(rawPath) } catch {}
         try { if (existsSync(finalPath)) unlinkSync(finalPath) } catch {}
       }
     }
-    if (!cards.length) { await react('❌'); return m.reply('❌ فشل تحويل الفيديوهات') }
+
+    if (!cards.length) { await react('❌'); return m.reply('❌ فشل تحويل كل الفيديوهات\nجرب كلمة ثانية') }
+
     const finalMessage = generateWAMessageFromContent(m.chat, {
       viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
         body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 نتائج: ${text}\n📹 ${cards.length} فيديو\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }),
@@ -193,11 +231,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
       })}}
     }, { quoted: m })
+
     await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id })
     await react('✅')
-  } catch (e) { console.error(e); await react('❌'); m.reply('❌ خطأ في البحث') }
+
+  } catch (e) {
+    console.error(e)
+    await react('❌')
+    m.reply('❌ خطأ في البحث')
+  }
 }
+
 handler.help = ['بينترف']
 handler.tags = ['downloader']
 handler.command = /^(بينترف|بنترف|pinterestvid|pinvid|بينترستفيديو)$/i
+
 export default handler
