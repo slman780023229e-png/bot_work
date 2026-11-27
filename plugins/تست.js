@@ -16,7 +16,7 @@ const handler = async (m, { conn }) => {
     }
   }
 
-  const videoUrl = 'https://files.catbox.moe/isiwqc.mp4'
+  const videoUrl = 'https://files.catbox.moe/samb4m.mp4'
   const res = await fetch(videoUrl)
   const buffer = await res.buffer()
 
