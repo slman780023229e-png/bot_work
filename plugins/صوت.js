@@ -10,13 +10,12 @@ import FormData from 'form-data'
 const execAsync = promisify(execFile)
 const FFMPEG = ffmpegPath
 
-const elevenKey = 'sk_997a18b66c4b4aeaa7b3d1d3751bb4aae38c9f4c53e638a9'
+const elevenKey = 'sk_5ea1711036aa51db87e0fe96cea8a0d1368d2f0803bfd39b'
 
 const handler = async (m, { conn, text, usedPrefix }) => {
   const react = async(e)=>{ try{ await conn.sendMessage(m.chat,{react:{text:e,key:m.key}}) }catch{} }
   let input = (text || '').trim()
   if(!input) return m.reply(`رد على اي فويس واكتب:\n${usedPrefix}صوت الكلام الجديد`)
-
   if(input.length > 500) input = input.slice(0, 500)
   await react('⏳')
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(),'arthur-clone-'))
@@ -25,27 +24,14 @@ const handler = async (m, { conn, text, usedPrefix }) => {
   const samplePath = path.join(tmpDir,'sample.mp3')
 
   try{
-    // === هنا كان الخطأ، صححته ===
     let quoted = m.quoted || m.msg?.contextInfo?.quotedMessage
     if(!quoted) return m.reply(`لازم ترد على فويس!\nارسل فويس 15 ثانية، ورد عليه واكتب:\n${usedPrefix}صوت هلا والله`)
-
     await m.reply(`سمعت الفويس، الحين بنسخ صوته... ⏳`)
 
-    // طريقة تحميل الفويس الصحيحة للبوت حقك
     let voiceBuffer = null
-    try {
-      // الطريقة 1: عن طريق conn
-      voiceBuffer = await conn.downloadMediaMessage(quoted)
-    } catch(e) {
-      console.log('downloadMediaMessage failed', e.message)
-    }
-    if(!voiceBuffer?.length && typeof quoted.download === 'function') {
-      try { voiceBuffer = await quoted.download() } catch {}
-    }
-    if(!voiceBuffer?.length && m.quoted?.download) {
-      try { voiceBuffer = await m.quoted.download() } catch {}
-    }
-    if(!voiceBuffer?.length) throw new Error('ما قدرت احمل الفويس، جرب ترد على الفويس مرة ثانية')
+    try { voiceBuffer = await conn.downloadMediaMessage(quoted) } catch(e) { console.log(e.message) }
+    if(!voiceBuffer?.length && m.quoted?.download) { try { voiceBuffer = await m.quoted.download() } catch {} }
+    if(!voiceBuffer?.length) throw new Error('ما قدرت احمل الفويس، جرب ترد عليه مرة ثانية')
 
     fs.writeFileSync(samplePath, voiceBuffer)
 
@@ -76,9 +62,7 @@ const handler = async (m, { conn, text, usedPrefix }) => {
     const oggBuffer = fs.readFileSync(oggPath)
     await conn.sendMessage(m.chat, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m })
     await react('✅')
-
     try{ await axios.delete(`https://api.elevenlabs.io/v1/voices/${voiceId}`, { headers: { 'xi-api-key': elevenKey } }) }catch{}
-
   }catch(e){
     console.error(e)
     await react('❌')
@@ -87,7 +71,6 @@ const handler = async (m, { conn, text, usedPrefix }) => {
     try{ fs.rmSync(tmpDir,{recursive:true,force:true}) }catch{}
   }
 }
-
 handler.help = ['صوت']
 handler.tags = ['audio']
 handler.command = /^(صوت|انطق)$/i
