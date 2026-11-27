@@ -99,7 +99,6 @@ const EMOJI_RULES = [
 
 const FALLBACK_EMOJIS = ['⚡', '✨', '🎯', '🌟', '🔥', '💎', '🧭', '📌']
 
-// يقرأ التعبير الرمزي من core/commandEmojis.js أولًا، ثم القواعد والاحتياط
 const resolveCommandEmoji = (cmd = '') => {
     const raw = String(cmd || '').trim()
     if (!raw) return '⚡'
@@ -133,6 +132,44 @@ const getSectionReaction = (category) => {
     if (iconFromCategory && iconFromCategory !== '⚡') return iconFromCategory
     const firstCmd = category.commands?.[0]?.command
     return firstCmd ? resolveCommandEmoji(firstCmd) : '📂'
+}
+
+// جلب اسم الشخص بدون علامة @ لاستخدامه في رسالة القسم
+const getDisplayNameWithoutAt = async (conn, m) => {
+    const sender = m?.sender || m?.key?.participant || m?.chat || ''
+    const cleanText = (val = '') => String(val).replace(/@+/g, '').trim()
+
+    const candidates = [
+        m?.pushName,
+        m?.notify,
+        global?.db?.data?.users?.[sender]?.name
+    ]
+
+    for (const c of candidates) {
+        const cleaned = cleanText(c)
+        if (cleaned) return cleaned
+    }
+
+    if (m?.isGroup && sender && typeof conn?.groupMetadata === 'function') {
+        try {
+            const meta = await conn.groupMetadata(m.chat)
+            const participant = (meta?.participants || []).find(p =>
+                p.id === sender || p.jid === sender || p.lid === sender
+            )
+            const pName = cleanText(participant?.notify || participant?.name)
+            if (pName) return pName
+        } catch {}
+    }
+
+    if (sender && typeof conn?.getName === 'function') {
+        try {
+            const fetchedName = cleanText(await conn.getName(sender))
+            if (fetchedName && !/^\d+$/.test(fetchedName)) return fetchedName
+        } catch {}
+    }
+
+    const fallbackNum = String(sender).split('@')[0] || 'صديقي'
+    return cleanText(fallbackNum) || 'صديقي'
 }
 
 const CATEGORY_ALIASES = {
@@ -249,7 +286,6 @@ const commandsFromPattern = (pattern) => {
         )
 }
 
-// يضمن إرجاع أمر واحد فقط لكل ملف بلجن
 const getPluginCommands = (plugin, fileName) => {
     const candidates = []
     if (Array.isArray(plugin?.help)) candidates.push(...plugin.help)
@@ -417,7 +453,6 @@ const loadRawImageBuffer = async (url) => {
     }
 }
 
-// يصغّر الصورة مع الحفاظ على الوجه كاملًا وقص خفيف جدًا من الأسفل
 const frameSectionImage = async (rawBuf, cropBottom = 0.05, maxWidth = 600, maxHeight = 420) => {
     if (!rawBuf?.length) return null
     const sharp = await getSharp()
@@ -484,7 +519,6 @@ const buildQuickReplyButtons = (prefix = '.') => [
     { display: '👑 تـنـصـيـب', id: `${prefix}تنصيب` }
 ]
 
-// إرسال رسالة القسم مع صورة مصغّرة تحفظ كامل الوجه + زرّين مضمونين تحته
 const sendSectionCard = async (conn, m, body, prefix = '.', sectionImg = SECTION_IMAGES.system) => {
     const imgBuf = await loadSectionBuffer(sectionImg) || await loadSectionBuffer({ url: defaultImageUrl, cropBottom: 0.05 })
     const buttons = buildQuickReplyButtons(prefix)
@@ -538,6 +572,7 @@ const sendSectionCard = async (conn, m, body, prefix = '.', sectionImg = SECTION
 const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
     const menu = await getMenuData()
     const category = findCategory(menu, categoryName)
+    const displayName = await getDisplayNameWithoutAt(conn, m)
 
     if (!category) {
         try {
@@ -546,6 +581,7 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 
         const notFoundBody =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ⚡ ╎ أهلا ${displayName}
 *┃* 🚫 ╎ القسم "${categoryName}" غير موجود
 *┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
@@ -564,6 +600,7 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 
     const body =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ⚡ ╎ أهلا ${displayName}
 *┃* ${category.icon} ╎ قسم: *${category.name}*
 ${cmdLines}
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
@@ -589,11 +626,7 @@ const handler = async (m, { conn, usedPrefix }) => {
             await conn.sendMessage(m.chat, { react: { text: '⚡', key: m.key } })
         } catch {}
 
-        let user = 'صديقي'
-        try {
-            user = await conn.getName(m.sender) || 'صديقي'
-        } catch {}
-
+        const user = await getDisplayNameWithoutAt(conn, m)
         const menu = await getMenuData()
 
         if (!menu.categories.length) {
