@@ -11,6 +11,7 @@ import {
 } from '@whiskeysockets/baileys'
 import fetch from 'node-fetch'
 import { ButtonV2 } from '../core/NIXCODE.js'
+import { COMMAND_EMOJIS, getCommandEmoji as getDictEmoji } from '../core/commandEmojis.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -98,11 +99,24 @@ const EMOJI_RULES = [
 
 const FALLBACK_EMOJIS = ['⚡', '✨', '🎯', '🌟', '🔥', '💎', '🧭', '📌']
 
-// يختار تعبيراً رمزياً مناسباً لأي أمر أو قسم حتى لو لم يطابق قاعدة مباشرة
-const getCommandEmoji = (cmd = '') => {
-    const k = normalize(cmd)
-    if (!k) return '⚡'
+// يقرأ التعبير الرمزي من core/commandEmojis.js أولًا، ثم القواعد والاحتياط
+const resolveCommandEmoji = (cmd = '') => {
+    const raw = String(cmd || '').trim()
+    if (!raw) return '⚡'
 
+    const canonical = getCanonicalCommand(raw)
+    const candidates = [raw, canonical, normalize(raw), normalize(canonical)]
+
+    for (const candidate of candidates) {
+        if (!candidate) continue
+        if (Object.prototype.hasOwnProperty.call(COMMAND_EMOJIS, candidate)) {
+            return COMMAND_EMOJIS[candidate]
+        }
+        const fromDict = getDictEmoji(candidate, null)
+        if (fromDict) return fromDict
+    }
+
+    const k = normalize(canonical || raw)
     const found = EMOJI_RULES.find(([keys]) => matchesAny(k, keys))
     if (found) return found[1]
 
@@ -115,10 +129,10 @@ const getCommandEmoji = (cmd = '') => {
 
 const getSectionReaction = (category) => {
     if (!category) return '🔎'
-    const iconFromCategory = getCommandEmoji(`${category.name} ${category.icon || ''}`)
+    const iconFromCategory = resolveCommandEmoji(`${category.name} ${category.icon || ''}`)
     if (iconFromCategory && iconFromCategory !== '⚡') return iconFromCategory
     const firstCmd = category.commands?.[0]?.command
-    return firstCmd ? getCommandEmoji(firstCmd) : '📂'
+    return firstCmd ? resolveCommandEmoji(firstCmd) : '📂'
 }
 
 const CATEGORY_ALIASES = {
@@ -534,7 +548,7 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* 🚫 ╎ القسم "${categoryName}" غير موجود
 *┃* ⚡ ╎ اكتب ${usedPrefix}اوامر لعرض الأقسام
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
         return await sendSectionCard(conn, m, notFoundBody, usedPrefix, { url: defaultImageUrl, cropBottom: 0.05 })
     }
 
@@ -545,14 +559,14 @@ const showCategory = async (conn, m, categoryName, usedPrefix = '.') => {
     } catch {}
 
     const cmdLines = category.commands
-        .map(item => `*┃* ${getCommandEmoji(item.command)} ╎ ${item.command}`)
+        .map(item => `*┃* ${resolveCommandEmoji(item.command)} ╎ ${item.command}`)
         .join('\n')
 
     const body =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* ${category.icon} ╎ قسم: *${category.name}*
 ${cmdLines}
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
 
     return await sendSectionCard(conn, m, body, usedPrefix, category.image)
 }
@@ -597,7 +611,7 @@ const handler = async (m, { conn, usedPrefix }) => {
 *┃* 📂 ╎ الأقسام: *${menu.categories.length}*
 *┃* ⚔️ ╎ الأوامر: *${menu.totalCommands}*
 *┃* ⚡ ╎ اختر القسم لعرض أوامره
-*◇❐ ═━━╾⚡╼╼━━═ ❐◇*`
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
 
         const rows = menu.categories.map(category => ({
             header: category.icon,
