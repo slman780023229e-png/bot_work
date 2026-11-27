@@ -1,8 +1,25 @@
 let linkRegex = /chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i
 
+async function requestJoinByInvite(conn, code) {
+  return conn.query({
+    tag: 'iq',
+    attrs: {
+      id: conn.generateMessageTag?.() || Date.now().toString(),
+      to: 'g.us',
+      type: 'set',
+      xmlns: 'w:g2'
+    },
+    content: [
+      {
+        tag: 'invite',
+        attrs: { code }
+      }
+    ]
+  })
+}
+
 let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) => {
   try {
-    // التحقق من صلاحية المستخدم (فقط المطورين)
     if (!isOwner && !isMods) {
       return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
@@ -12,7 +29,6 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
       )
     }
 
-    // استخراج الرابط من الرد أو النص
     let link = (m.quoted ? m.quoted.text : text) || ''
     let [_, code] = link.match(linkRegex) || []
 
@@ -26,7 +42,6 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
       )
     }
 
-    // جلب معلومات الدعوة لمعرفة حالة الموافقة واسم المجموعة
     let inviteInfo = null
     try {
       inviteInfo = await conn.groupGetInviteInfo(code)
@@ -35,11 +50,9 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
     const groupName = inviteInfo?.subject || 'غير معروفة'
     const needsApproval = Boolean(inviteInfo?.joinApprovalMode)
 
-    // محاولة الانضمام أو تقديم طلب الانضمام
     try {
       let res = await conn.groupAcceptInvite(code)
 
-      // إذا كانت المجموعة تتطلب موافقة المشرفين
       if (needsApproval || !res) {
         return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
@@ -63,15 +76,27 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
       const errMsg = String(err?.message || err || '')
       const status = err?.data || err?.output?.statusCode
 
-      // بعض إصدارات Baileys ترمي خطأ عند إرسال طلب موافقة أو وجود طلب مسبق
-      if (needsApproval || /approval|pending|request/i.test(errMsg)) {
-        return m.reply(
+      // محاولة إرسال طلب الانضمام صراحةً إذا كانت المجموعة تتطلب موافقة أو أعطت not-authorized
+      if (needsApproval || /not-authorized|approval|pending|request/i.test(errMsg)) {
+        try {
+          await requestJoinByInvite(conn, code)
+          return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* 📩 ╎ *المجموعة تتطلب موافقة*
+*┃* 📩 ╎ *تم تقديم طلب الانضمام*
 *┃* 📩 ╎ *المجموعة:* ${groupName}
-*┃* 📩 ╎ *الحالة:* تم إرسال الطلب أو معلق مسبقًا
+*┃* 📩 ╎ *الحالة:* بانتظار موافقة المشرفين
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
-        )
+          )
+        } catch (reqErr) {
+          console.error('[ARTHUR JOIN REQUEST ERR]', reqErr)
+          return m.reply(
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ❌ ╎ *تعذر الانضمام أو إرسال الطلب*
+*┃* ❌ ╎ *المجموعة:* ${groupName}
+*┃* ❌ ╎ *السبب:* قد يكون البوت مطرودًا سابقًا أو الرابط مرفوض من واتساب (${errMsg})
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
+          )
+        }
       }
 
       let reason = 'الرابط منتهي الصلاحية أو غير صالح'
