@@ -1,10 +1,10 @@
 // plugins/بينترف.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight - Pinterest Videos 📌
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Pinterest Videos + Carousel ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { unlinkSync, existsSync, statSync } from 'fs'
+import { unlinkSync, existsSync, statSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -18,9 +18,6 @@ const execAsync = promisify(exec)
 const YTDLP_PATH = '/home/container/yt-dlp'
 const COOKIES_PATH = '/home/container/cookies/pinterest.txt'
 
-// ═══════════════════════════════════════
-// سكرابر Pinterest الرسمي - فيديوهات فقط
-// ═══════════════════════════════════════
 const PINTEREST_BASE = 'https://www.pinterest.com'
 const PINTEREST_SEARCH_PATH = '/resource/BaseSearchResource/get/'
 const PINTEREST_HEADERS = {
@@ -39,102 +36,57 @@ async function getPinterestCookies() {
       const setCookies = res.headers['set-cookie']
       if (!setCookies) return null
       return setCookies.map(c => c.split(';')[0].trim()).join('; ')
-   } catch {
-      return null
-   }
+   } catch { return null }
 }
 
-// يجلب فيديوهات فقط
-async function searchPinterestVideos(query, needed = 15) {
+async function searchPinterestVideos(query, needed = 10) {
    const videos = []
+   const seen = new Set()
    const cookies = await getPinterestCookies()
    if (!cookies) return videos
 
    let bookmarks = ['']
    let attempts = 0
-   const maxAttempts = 12
 
-   while (videos.length < needed && bookmarks.length && attempts < maxAttempts) {
+   while (videos.length < needed && bookmarks.length && attempts < 25) {
       attempts++
       try {
          const params = {
             source_url: `/search/pins/?q=${encodeURIComponent(query)}`,
             data: JSON.stringify({
-               options: { isPrefetch: false, query, scope: 'pins', bookmarks, page_size: 50 },
+               options: { isPrefetch: false, query, scope: 'pins', bookmarks, page_size: 100 },
                context: {}
             }),
             _: Date.now()
          }
-
          const { data } = await axios.get(`${PINTEREST_BASE}${PINTEREST_SEARCH_PATH}`, {
             headers: { ...PINTEREST_HEADERS, cookie: cookies },
-            params,
-            timeout: 15000
+            params, timeout: 20000
          })
-
          const results = data?.resource_response?.data?.results || []
          if (!results.length) break
 
          for (const r of results) {
-            // فيديو من Pinterest
-            let videoUrl = null
-            let thumb = r?.images?.orig?.url || null
-
-            // الطريقة 1: videos.video_list
-            if (r?.videos?.video_list) {
-               let list = r.videos.video_list
-               // خذ اعلى جودة
-               let best = list['V_720P'] || list['V_480P'] || list['V_360P'] || list['V_HLS_V4'] || Object.values(list)[0]
-               if (best?.url) videoUrl = best.url
-            }
-
-            // الطريقة 2: story_pin_data
-            if (!videoUrl && r?.story_pin_data?.pages?.length) {
-               for (let page of r.story_pin_data.pages) {
-                  if (page?.blocks?.length) {
-                     for (let b of page.blocks) {
-                        if (b?.video?.video_list) {
-                           let vlist = b.video.video_list
-                           let best = vlist['V_720P'] || vlist['V_480P'] || Object.values(vlist)[0]
-                           if (best?.url) { videoUrl = best.url; break }
-                        }
-                     }
-                  }
-                  if (videoUrl) break
-               }
-            }
-
-            // الطريقة 3: embed
-            if (!videoUrl && r?.embed?.src) videoUrl = null // نتجاهل embed
-
-            if (videoUrl) {
-               videos.push({
-                  video: videoUrl,
-                  thumb: thumb,
-                  title: r?.title || r?.description || query,
-                  link: `https://www.pinterest.com/pin/${r?.id}/`,
-                  id: r?.id
-               })
-               if (videos.length >= needed) break
-            }
+            if (!r?.id || seen.has(r.id)) continue
+            let isVideo = r?.is_video || r?.videos || r?.story_pin_data?.pages?.some(p => p?.blocks?.some(b => b?.video))
+            if (!isVideo) continue
+            seen.add(r.id)
+            videos.push({
+              link: `https://www.pinterest.com/pin/${r.id}/`,
+              id: r.id,
+              thumb: r?.images?.orig?.url || r?.images?.['736x']?.url || null
+            })
+            if (videos.length >= needed) break
          }
-
          const nextBookmark = data?.resource_response?.bookmark
          if (!nextBookmark || nextBookmark === '-end-') break
          bookmarks = [nextBookmark]
-      } catch (e) {
-         break
-      }
+      } catch { break }
    }
-
    return videos.slice(0, needed)
 }
 
-// ═══════════════════════════════════════
-// Handler
-// ═══════════════════════════════════════
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-
   const react = async (emoji) => {
     try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
   }
@@ -144,106 +96,115 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       { type: 'title', text: '🎬 Pinterest Videos - ARTHUR BOT' },
       { type: 'divider' },
       { type: 'info', label: '🎬 بحث فيديوهات', value: `${usedPrefix + command} <كلمة>` },
-      { type: 'info', label: '📌 تحميل فيديو', value: `${usedPrefix + command} <رابط>` },
       { type: 'info', label: 'مثال', value: `${usedPrefix + command} انمي` }
     ]))
   }
 
-  // تحميل فيديو من الرابط - نفس القديم
+  // تحميل من رابط
   if (text.includes('pin.it') || text.includes('pinterest.com/pin/')) {
     await react('⏳')
     await m.reply('⏳ جاري تحميل الفيديو...')
-
     try {
       const outputPath = join(tmpdir(), `pin_${Date.now()}.mp4`)
-      const cmd = `export PATH=$HOME/.deno/bin:$PATH && ${YTDLP_PATH} -o ${outputPath} ${text} --cookies ${COOKIES_PATH} --no-playlist --force-overwrites --no-cookies --sleep-interval 5 --user-agent "Mozilla/5.0"`
-      await execAsync(cmd, { timeout: 180000 })
-
+      const cmd = `${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" --remux-video mp4 --recode-video mp4 -o "${outputPath}" "${text}"`
+      await execAsync(cmd, { timeout: 120000 })
       if (!existsSync(outputPath)) throw new Error('فشل')
-      const sizeMB = (statSync(outputPath).size / 1048576).toFixed(2)
-
-      await conn.sendMessage(m.chat, {
-        video: { url: outputPath },
-        caption: `✅ تم التحميل بواسطة ARTHUR BOT | ${sizeMB} MB`
-      }, { quoted: m })
+      await conn.sendMessage(m.chat, { video: { url: outputPath }, mimetype: 'video/mp4', caption: `✅ تم التحميل\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }, { quoted: m })
       await react('✅')
       try { unlinkSync(outputPath) } catch {}
-    } catch (e) {
-      await react('❌')
-      m.reply('❌ فشل التحميل')
-    }
+    } catch (e) { console.log(e.message); await react('❌'); m.reply('❌ فشل التحميل') }
     return
   }
 
-  // بحث فيديوهات
   await react('🔍')
-  await m.reply('🎬 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
+  await m.reply('🎬 جاري البحث عن 10 فيديوهات...')
 
   try {
-    const videos = await searchPinterestVideos(text, 15)
+    const videos = await searchPinterestVideos(text, 10)
+    if (!videos.length) { await react('❌'); return m.reply('❌ لا توجد فيديوهات\nجرب كلمة ثانية') }
 
-    if (!videos || videos.length === 0) {
-      await react('❌')
-      return m.reply('❌ لا توجد فيديوهات لهذا البحث\nجرب كلمة ثانية')
-    }
+    await m.reply(`✅ لقيت ${videos.length} فيديو، جاري تحميل الكروسيل...`)
 
     let cards = []
-    
+
     for (let i = 0; i < videos.length; i++) {
+      let v = videos[i]
+      let tmpFile = join(tmpdir(), `pinvid_${Date.now()}_${i}.mp4`)
       try {
-        let v = videos[i]
-        // نجرب نحمل الفيديو مباشر
-        const vidRes = await axios.get(v.video, { 
-          responseType: 'arraybuffer',
-          headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pinterest.com/' },
-          timeout: 30000,
-          maxContentLength: 60 * 1024 * 1024
-        })
-        
-        const buffer = Buffer.from(vidRes.data)
-        if (buffer.length < 5000) continue
-        
+        // 1. نحمل بـ yt-dlp ونحوله mp4 حقيقي
+        let cmd = `${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" --remux-video mp4 --recode-video mp4 -o "${tmpFile}" "${v.link}"`
+        await execAsync(cmd, { timeout: 90000 })
+        if (!existsSync(tmpFile)) continue
+        if (statSync(tmpFile).size < 10000) { try { unlinkSync(tmpFile) } catch {}; continue }
+
+        let buffer = readFileSync(tmpFile)
+
+        // 2. نسوي videoMessage للكروسيل
         const { videoMessage } = await generateWAMessageContent(
           { video: buffer },
           { upload: conn.waUploadToServer }
         )
-        
         if (!videoMessage) continue
 
         cards.push({
-          body: proto.Message.InteractiveMessage.Body.fromObject({ 
-            text: `🎬 فيديو ${i + 1} | 🔎 ${text}` 
+          body: proto.Message.InteractiveMessage.Body.fromObject({
+            text: `🎬 فيديو ${i + 1} | 🔎 ${text}`
           }),
-          header: proto.Message.InteractiveMessage.Header.fromObject({ 
+          header: proto.Message.InteractiveMessage.Header.fromObject({
             hasMediaAttachment: true,
-            videoMessage: videoMessage 
+            videoMessage: videoMessage
           }),
           nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
             buttons: [{
               name: "cta_url",
               buttonParamsJson: JSON.stringify({
                 display_text: "📌 فتح في Pinterest",
-                url: v.link || 'https://www.pinterest.com/search/pins/?q=' + encodeURIComponent(text)
+                url: v.link
+              })
+            },
+            {
+              name: "quick_reply",
+              buttonParamsJson: JSON.stringify({
+                display_text: "🎬 تحميل الفيديو",
+                id: `.بينترف ${v.link}`
               })
             }]
           })
         })
-      } catch (e) { 
-        continue 
+
+      } catch (e) {
+        console.log(`فشل فيديو ${i+1}:`, e.message)
+        // اذا فشل الفيديو، نحط صورته كبديل عشان الكروسيل ما ينقص
+        if (v.thumb) {
+          try {
+            const imgRes = await axios.get(v.thumb, { responseType: 'arraybuffer', timeout: 10000 })
+            const { imageMessage } = await generateWAMessageContent({ image: Buffer.from(imgRes.data) }, { upload: conn.waUploadToServer })
+            if (imageMessage) {
+              cards.push({
+                body: proto.Message.InteractiveMessage.Body.fromObject({ text: `🎬 فيديو ${i + 1} | 🔎 ${text}\n(اضغط فتح لمشاهدته)` }),
+                header: proto.Message.InteractiveMessage.Header.fromObject({ hasMediaAttachment: true, imageMessage }),
+                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+                  buttons: [{ name: "cta_url", buttonParamsJson: JSON.stringify({ display_text: "📌 فتح الفيديو", url: v.link }) }]
+                })
+              })
+            }
+          } catch {}
+        }
+        continue
+      } finally {
+        try { if (existsSync(tmpFile)) unlinkSync(tmpFile) } catch {}
       }
     }
 
-    if (cards.length === 0) {
-      await react('❌')
-      return m.reply('❌ فشل تحميل الفيديوهات\nجرب مرة ثانية')
-    }
+    if (!cards.length) { await react('❌'); return m.reply('❌ فشل تحميل الكروسيل\nالكوكيز حق بنترست ممكن تكون منتهية') }
 
+    // 3. ارسال الكروسيل
     const finalMessage = generateWAMessageFromContent(m.chat, {
       viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
         body: proto.Message.InteractiveMessage.Body.create({
-          text: `🎬 نتائج: ${text}\n📹 ${cards.length} فيديو\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight`
+          text: `🎬 نتائج: ${text}\n📹 ${cards.length} فيديو\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓`
         }),
-        footer: proto.Message.InteractiveMessage.Footer.create({ text: global.watermark }),
+        footer: proto.Message.InteractiveMessage.Footer.create({ text: global.watermark || '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡' }),
         carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
       })}}
     }, { quoted: m })
