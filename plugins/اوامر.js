@@ -11,7 +11,6 @@ import {
 } from '@whiskeysockets/baileys'
 import fetch from 'node-fetch'
 import { ButtonV2 } from '../core/NIXCODE.js'
-import { COMMAND_EMOJIS, getCommandEmoji as getDictEmoji } from '../core/commandEmojis.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -19,16 +18,28 @@ const __dirname = path.dirname(__filename)
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
 
-// غيّرها إلى false إذا أردت تعطيل الصور تماماً في القائمة
+// تحكم سريع بالصور
 const ENABLE_MENU_IMAGES = true
 const defaultImageUrl = 'https://files.catbox.moe/c4xoo3.jpg'
 
-// صور الأقسام
 const SECTION_IMAGES = {
     groups: { url: 'https://files.catbox.moe/yu3pvo.jpg', cropBottom: 0.05 },
     download: { url: 'https://files.catbox.moe/is2shx.jpg', cropBottom: 0.05 },
     games: { url: 'https://files.catbox.moe/81wrja.jpg', cropBottom: 0.05 },
     system: { url: 'https://files.catbox.moe/od62an.jpg', cropBottom: 0.05 }
+}
+
+// محاولة تحميل قاموس التعبيرات الرمزية بأمان دون إسقاط القائمة إذا كان فيه خطأ
+let COMMAND_EMOJIS = {}
+let getDictEmoji = null
+try {
+    const emojiMod = await import('../core/commandEmojis.js')
+    COMMAND_EMOJIS = emojiMod?.COMMAND_EMOJIS || emojiMod?.default || {}
+    if (typeof emojiMod?.getCommandEmoji === 'function') {
+        getDictEmoji = emojiMod.getCommandEmoji
+    }
+} catch (err) {
+    console.error('[ARTHUR MENU] تنبيه: تعذر تحميل commandEmojis.js، سيتم استخدام الإيموجي البديل:', err?.message || err)
 }
 
 const CACHE_TTL = 30_000
@@ -104,6 +115,12 @@ const EMOJI_RULES = [
 
 const FALLBACK_EMOJIS = ['⚡', '✨', '🎯', '🌟', '🔥', '💎', '🧭', '📌']
 
+const sanitizeEmoji = (val) => {
+    if (typeof val !== 'string') return null
+    const cleaned = val.trim()
+    return cleaned || null
+}
+
 const resolveCommandEmoji = (cmd = '') => {
     const raw = String(cmd || '').trim()
     if (!raw) return '⚡'
@@ -114,11 +131,14 @@ const resolveCommandEmoji = (cmd = '') => {
     for (const candidate of candidates) {
         if (!candidate) continue
         if (COMMAND_EMOJIS && Object.prototype.hasOwnProperty.call(COMMAND_EMOJIS, candidate)) {
-            return COMMAND_EMOJIS[candidate]
+            const e = sanitizeEmoji(COMMAND_EMOJIS[candidate])
+            if (e) return e
         }
-        if (typeof getDictEmoji === 'function') {
-            const fromDict = getDictEmoji(candidate, null)
-            if (fromDict) return fromDict
+        if (getDictEmoji) {
+            try {
+                const fromDict = sanitizeEmoji(getDictEmoji(candidate, null))
+                if (fromDict) return fromDict
+            } catch {}
         }
     }
 
