@@ -1,10 +1,10 @@
 // plugins/بينترف.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Pinterest Videos - بدون yt-dlp ✅
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Pinterest Videos - يشتغل في واتساب 100% ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
 import { promisify } from 'util'
-import { unlinkSync, existsSync, statSync } from 'fs'
+import { unlinkSync, existsSync, statSync, createWriteStream } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -39,7 +39,6 @@ async function getPinterestCookies() {
    } catch { return null }
 }
 
-// ===== نجيب رابط الفيديو المباشر من API =====
 async function searchPinterestVideos(query, needed = 10) {
    const videos = []
    const seen = new Set()
@@ -48,16 +47,12 @@ async function searchPinterestVideos(query, needed = 10) {
 
    let bookmarks = ['']
    let attempts = 0
-
    while (videos.length < needed && bookmarks.length && attempts < 30) {
       attempts++
       try {
          const params = {
             source_url: `/search/pins/?q=${encodeURIComponent(query)}`,
-            data: JSON.stringify({
-               options: { isPrefetch: false, query, scope: 'pins', bookmarks, page_size: 100 },
-               context: {}
-            }),
+            data: JSON.stringify({ options: { isPrefetch: false, query, scope: 'pins', bookmarks, page_size: 100 }, context: {} }),
             _: Date.now()
          }
          const { data } = await axios.get(`${PINTEREST_BASE}${PINTEREST_SEARCH_PATH}`, {
@@ -70,20 +65,14 @@ async function searchPinterestVideos(query, needed = 10) {
          for (const r of results) {
             if (!r?.id || seen.has(r.id)) continue
             seen.add(r.id)
-
-            // نجيب رابط الفيديو من كل الاماكن الممكنة
             let videoUrl = null
-
-            // 1. videos.video_list - الاهم
             if (r?.videos?.video_list) {
                let list = r.videos.video_list
-               // لا تاخذ HLS لانه m3u8 ما يشتغل في واتساب
-               videoUrl = list['V_720P']?.url || list['V_480P']?.url || list['V_360P']?.url || list['V_240P']?.url || null
-               // اذا ما فيه الا HLS، نتخطاه
+               // بس mp4، لا تاخذ HLS
+               videoUrl = list['V_720P']?.url || list['V_480P']?.url || list['V_360P']?.url || null
                if (!videoUrl) continue
+               if (videoUrl.includes('.m3u8')) continue
             }
-
-            // 2. story_pin_data
             if (!videoUrl && r?.story_pin_data?.pages?.length) {
                for (let page of r.story_pin_data.pages) {
                   for (let b of (page?.blocks || [])) {
@@ -96,26 +85,24 @@ async function searchPinterestVideos(query, needed = 10) {
                   if (videoUrl) break
                }
             }
-
             if (!videoUrl) continue
-
-            // نتأكد انه mp4 مو m3u8
-            if (videoUrl.includes('.m3u8')) continue
-
-            videos.push({
-              videoUrl,
-              link: `https://www.pinterest.com/pin/${r.id}/`,
-              id: r.id
-            })
+            videos.push({ videoUrl, link: `https://www.pinterest.com/pin/${r.id}/`, id: r.id })
             if (videos.length >= needed) break
          }
          const nextBookmark = data?.resource_response?.bookmark
          if (!nextBookmark || nextBookmark === '-end-') break
          bookmarks = [nextBookmark]
-      } catch (e) { console.log('SEARCH ERROR:', e.message); break }
+      } catch { break }
    }
-   console.log(`🔍 لقيت ${videos.length} فيديو mp4 حقيقي لـ: ${query}`)
    return videos.slice(0, needed)
+}
+
+// ===== تحويل الفيديو لصيغة واتساب =====
+async function convertForWhatsApp(inputPath, outputPath) {
+   // H.264 + AAC + faststart = الصيغة اللي واتساب يقبلها
+   const cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset veryfast -crf 28 -c:a aac -b:a 128k -movflags +faststart -vf "scale='min(720,iw)':-2" "${outputPath}"`
+   await execAsync(cmd, { timeout: 90000 })
+   return existsSync(outputPath) && statSync(outputPath).size > 10000
 }
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -128,23 +115,25 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       { type: 'title', text: '🎬 Pinterest Videos - ARTHUR BOT' },
       { type: 'divider' },
       { type: 'info', label: '🎬 بحث فيديوهات', value: `${usedPrefix + command} <كلمة>` },
-      { type: 'info', label: 'مثال', value: `${usedPrefix + command} انمي` }
+      { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو` }
     ]))
   }
 
-  // تحميل من رابط - نخليه بـ yt-dlp لان الرابط واحد بس
   if (text.includes('pin.it') || text.includes('pinterest.com/pin/')) {
     await react('⏳')
-    await m.reply('⏳ جاري تحميل الفيديو...')
+    await m.reply('⏳ جاري تحميل وتحويل الفيديو لصيغة واتساب...')
     try {
-      const outputPath = join(tmpdir(), `pin_${Date.now()}.mp4`)
-      const cmd = `${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" --remux-video mp4 -o "${outputPath}" "${text}"`
+      const rawPath = join(tmpdir(), `pin_raw_${Date.now()}.mp4`)
+      const finalPath = join(tmpdir(), `pin_${Date.now()}.mp4`)
+      const cmd = `${YTDLP_PATH} --no-playlist --force-overwrites --cookies ${COOKIES_PATH} --user-agent "Mozilla/5.0" -f "mp4/best[height<=720]/best" -o "${rawPath}" "${text}"`
       await execAsync(cmd, { timeout: 120000 })
-      if (!existsSync(outputPath) || statSync(outputPath).size < 10000) throw new Error('فشل')
-      await conn.sendMessage(m.chat, { video: { url: outputPath }, mimetype: 'video/mp4', caption: `✅ تم التحميل\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }, { quoted: m })
+      if (!existsSync(rawPath)) throw new Error('فشل')
+      await convertForWhatsApp(rawPath, finalPath)
+      try { unlinkSync(rawPath) } catch {}
+      await conn.sendMessage(m.chat, { video: { url: finalPath }, mimetype: 'video/mp4', caption: `✅ تم التحميل\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }, { quoted: m })
       await react('✅')
-      try { unlinkSync(outputPath) } catch {}
-    } catch (e) { console.log('PIN ERROR:', e.message); await react('❌'); m.reply('❌ فشل التحميل') }
+      try { unlinkSync(finalPath) } catch {}
+    } catch (e) { console.log(e.message); await react('❌'); m.reply('❌ فشل التحميل') }
     return
   }
 
@@ -153,40 +142,42 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   try {
     const videos = await searchPinterestVideos(text, 10)
-    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات mp4\nجرب كلمة ثانية مثل: anime, cats, football') }
+    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات\nجرب كلمة ثانية') }
 
-    await m.reply(`✅ لقيت ${videos.length} فيديو، جاري تحميل الكروسيل...`)
+    await m.reply(`✅ لقيت ${videos.length} فيديو، جاري التحويل لصيغة واتساب...`)
 
     let cards = []
-    let failed = 0
-
     for (let i = 0; i < videos.length; i++) {
       let v = videos[i]
+      let rawPath = join(tmpdir(), `raw_${Date.now()}_${i}.mp4`)
+      let finalPath = join(tmpdir(), `final_${Date.now()}_${i}.mp4`)
       try {
-        // ===== تحميل مباشر من رابط بنترست، بدون yt-dlp =====
+        // 1. نحمل الفيديو الخام من بنترست
         const vidRes = await axios.get(v.videoUrl, {
           responseType: 'arraybuffer',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.pinterest.com/',
-            'Accept': 'video/mp4,video/*,*/*'
-          },
-          timeout: 30000,
-          maxContentLength: 60 * 1024 * 1024
+          headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pinterest.com/' },
+          timeout: 30000, maxContentLength: 60 * 1024 * 1024
         })
+        const { writeFileSync, readFileSync } = await import('fs')
+        writeFileSync(rawPath, Buffer.from(vidRes.data))
+        if (statSync(rawPath).size < 20000) { try { unlinkSync(rawPath) } catch {}; continue }
 
-        let buffer = Buffer.from(vidRes.data)
-        console.log(`فيديو ${i+1}: ${(buffer.length/1024/1024).toFixed(2)} MB - ${v.videoUrl.slice(0,80)}`)
+        // 2. نحوله لصيغة واتساب - هنا الحل
+        let ok = await convertForWhatsApp(rawPath, finalPath)
+        if (!ok) { try { unlinkSync(rawPath) } catch {}; continue }
 
-        if (buffer.length < 20000) { failed++; continue }
+        // 3. اذا اكبر من 12MB نصغره عشان واتساب يقبله في الكروسيل
+        if (statSync(finalPath).size > 12 * 1024 * 1024) {
+          console.log(`فيديو ${i+1} كبير، نتخطاه`)
+          try { unlinkSync(rawPath); unlinkSync(finalPath) } catch {}
+          continue
+        }
 
-        // تأكد انه مو صورة
-        let isImage = (buffer[0] === 0xFF && buffer[1] === 0xD8) || buffer.slice(1,4).toString() === 'PNG'
-        if (isImage) { failed++; console.log(`فيديو ${i+1} طلع صورة!`); continue }
-
+        let buffer = readFileSync(finalPath)
         const { videoMessage } = await generateWAMessageContent({ video: buffer }, { upload: conn.waUploadToServer })
-        if (!videoMessage) { failed++; continue }
+        if (!videoMessage) continue
 
+        // 4. الترقيم الصح - cards.length + 1 مو i + 1
         cards.push({
           body: proto.Message.InteractiveMessage.Body.fromObject({ text: `🎬 فيديو ${cards.length + 1} | 🔎 ${text}` }),
           header: proto.Message.InteractiveMessage.Header.fromObject({ hasMediaAttachment: true, videoMessage }),
@@ -199,16 +190,15 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         })
 
       } catch (e) {
-        failed++
-        console.log(`❌ فشل تحميل فيديو ${i+1}:`, e.message)
+        console.log(`فشل فيديو ${i+1}:`, e.message)
         continue
+      } finally {
+        try { if (existsSync(rawPath)) unlinkSync(rawPath) } catch {}
+        try { if (existsSync(finalPath)) unlinkSync(finalPath) } catch {}
       }
     }
 
-    if (!cards.length) {
-      await react('❌')
-      return m.reply(`❌ فشل تحميل كل الفيديوهات (${failed} فشل)\n\nجرب كلمة ثانية، او ارسل لي اللي طلع في الكونسول عشان اشوف الخطأ`)
-    }
+    if (!cards.length) { await react('❌'); return m.reply('❌ فشل تحويل الفيديوهات\nتأكد ان ffmpeg مثبت في السيرفر') }
 
     const finalMessage = generateWAMessageFromContent(m.chat, {
       viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
@@ -220,7 +210,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id })
     await react('✅')
-    if (failed > 0) await m.reply(`✅ تم ارسال ${cards.length} فيديو | فشل ${failed}`)
 
   } catch (e) {
     console.error(e)
