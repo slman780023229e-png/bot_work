@@ -1,5 +1,5 @@
 // plugins/انمي.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي من فيس - حلقات بالترتيب + غلاف + تاريخ + مصدر ✅
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي من صفحات فيس - صفحة > حلقات ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
@@ -21,13 +21,13 @@ const SEARCH_API = "https://apidirect.io/v1/facebook/videos"
 const DOWNLOAD_API = "https://fdown.isuru.eu.org/download"
 
 const cache = new Map()
-const CACHE_TIME = 15 * 60 * 1000
+const CACHE_TIME = 20 * 60 * 1000
 
 function cleanName(name) {
     return String(name || "Facebook").replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, " ").trim().slice(0, 80)
 }
-function makeID() {
-    return "ep_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6)
+function makeID(prefix) {
+    return prefix + "_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6)
 }
 function cleanCache() {
     const now = Date.now()
@@ -39,44 +39,40 @@ function getFacebookURL(video) {
 }
 function getTitle(video) { return video.title || video.name || video.description || video.caption || "حلقة" }
 function getAuthor(video) { return video.author?.name || video.author?.username || video.author || video.page_name || video.publisher || "Facebook" }
-
-// ===== صورة الغلاف =====
+function getAuthorId(video) {
+    return video.author?.id || video.author?.username || video.page_id || video.publisher_id || getAuthor(video)
+}
 function getCover(video) {
     return video.thumbnail || video.cover || video.image || video.picture || video.thumbnail_url || video.cover_url ||
            video.author?.picture || video.author?.avatar || video.page_picture || null
 }
-
-// ===== تاريخ النزول =====
+function getPageCover(video) {
+    // غلاف الصفحة - صورة الصفحة نفسها، مو صورة الفيديو
+    return video.author?.picture || video.author?.avatar || video.page_picture || video.author?.cover || getCover(video)
+}
 function getDate(video) {
     let d = video.created_time || video.created_at || video.published_at || video.publish_time || video.timestamp || video.date || null
     if (!d) return "غير معروف"
     try {
         let date = new Date(d)
         if (isNaN(date.getTime())) return String(d).slice(0, 10)
-        // صيغة عربية: 2026-11-28
         return date.toISOString().slice(0, 10)
     } catch { return String(d).slice(0, 10) }
 }
-
-// ===== نطلع رقم الحلقة من العنوان - عشان نرتب =====
 function getEpisodeNumber(title) {
     let t = String(title)
-    // 1. "الحلقة 12" / "حلقة 12" / "الحلقه 12"
-    let m1 = t.match(/(?:الحلقة|الحلقه|حلقة|حلقه|الحلقة\s*رقم|EP|Ep|Episode|الحلقة\s*)\s*[:\-_#]?\s*(\d+)/i)
+    let m1 = t.match(/(?:الحلقة|الحلقه|حلقة|حلقه|EP|Ep|Episode)\s*[:\-_#]?\s*(\d+)/i)
     if (m1) return parseInt(m1[1])
-    // 2. "ناروتو 12" - رقم في الاخير
     let m2 = t.match(/(\d+)\s*$/)
     if (m2) return parseInt(m2[1])
-    // 3. "12 - ناروتو" - رقم في البداية
     let m3 = t.match(/^\s*(\d+)\s*[-|:.]/)
     if (m3) return parseInt(m3[1])
-    // 4. اي رقم في العنوان
     let m4 = t.match(/(\d+)/)
     if (m4) return parseInt(m4[1])
-    return 9999 // اللي ما عنده رقم، نحطه في الاخير
+    return 9999
 }
 
-async function searchOne(query, needed = 20) {
+async function searchOne(query, needed = 30) {
     let all = []
     for (let page = 1; page <= 3; page++) {
         try {
@@ -95,7 +91,7 @@ async function searchOne(query, needed = 20) {
     return all
 }
 
-async function searchWide(query, needed = 30) {
+async function searchWide(query, needed = 40) {
     let tries = [
         `${query} حلقة`,
         `${query} الحلقة`,
@@ -104,6 +100,7 @@ async function searchWide(query, needed = 30) {
         query,
         `${query} مدبلج`,
         `${query} مترجم`,
+        `${query} جميع الحلقات`,
     ]
     let all = []
     let seen = new Set()
@@ -117,23 +114,7 @@ async function searchWide(query, needed = 30) {
             all.push(v)
         }
     }
-    if (all.length < 5) {
-        let words = query.split(' ').filter(w => w.length > 2)
-        if (words.length > 1) {
-            let more = await searchOne(`${words[0]} حلقة`, needed - all.length)
-            for (let v of more) {
-                let url = getFacebookURL(v)
-                if (!url || seen.has(url)) continue
-                seen.add(url)
-                all.push(v)
-            }
-        }
-    }
-    if (!all.length) {
-        let trend = await searchOne('انمي حلقة', needed)
-        return { videos: trend, similar: true, usedQuery: 'انمي حلقة' }
-    }
-    return { videos: all.slice(0, needed), similar: all.length < 5, usedQuery: query }
+    return all.slice(0, needed)
 }
 
 async function getLightQuality(url) {
@@ -177,6 +158,16 @@ async function remuxOnly(inputPath, outputPath) {
    return false
 }
 
+async function getImageBuffer(url) {
+    if (!url) return null
+    try {
+        const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })
+        let buf = Buffer.from(res.data)
+        if (buf.length < 5000) return null
+        return buf
+    } catch { return null }
+}
+
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   const react = async (emoji) => {
     try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
@@ -184,22 +175,21 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (!text) {
     return m.reply(theme.build([
-      { type: 'title', text: '🍥 انمي من Facebook - ARTHUR BOT' },
+      { type: 'title', text: '🍥 انمي من صفحات Facebook - ARTHUR BOT' },
       { type: 'divider' },
-      { type: 'info', label: '🍥 بحث حلقات', value: `${usedPrefix + command} <اسم الانمي>` },
+      { type: 'info', label: '🍥 بحث', value: `${usedPrefix + command} <اسم الانمي>` },
       { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو` },
-      { type: 'info', label: 'مثال', value: `${usedPrefix + command} ون بيس` },
+      { type: 'info', label: 'الطريقة', value: 'ابحث > اختر الصفحة > اختر الحلقة' },
     ]))
   }
 
   cleanCache()
 
-  // ===== اذا ضغط زر حلقة =====
+  // ===== 3. ضغط على زر حلقة - تحميل =====
   if (text.startsWith('ep_')) {
     const old = cache.get(m.chat)
-    const selected = old?.results?.find(x => x.id === text)
+    const selected = old?.episodes?.find(x => x.id === text)
     if (!selected) return m.reply('❌ الحلقة انتهت، ابحث من جديد\n.انمي ناروتو')
-
     await react('⏳')
     await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
     try {
@@ -212,12 +202,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       let ok = await remuxOnly(rawPath, finalPath)
       if (!ok) copyFileSync(rawPath, finalPath)
       try { unlinkSync(rawPath) } catch {}
-
       await conn.sendMessage(m.chat, {
         video: { url: finalPath },
         mimetype: 'video/mp4',
         fileName: `${cleanName(selected.title)}.mp4`,
-        caption: `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الحلقة :* ${selected.title}\n*┃ 📺 الانمي :* ${selected.animeName}\n*┃ 🔢 رقم الحلقة :* ${selected.epNum === 9999 ? 'غير معروف' : selected.epNum}\n*┃ 📅 تاريخ النزول :* ${selected.date}\n*┃ 👤 المصدر :* ${selected.author}\n*┃ 📦 الجودة :* ${q.name} - بحجمها الكامل\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*`
+        caption: `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الحلقة :* ${selected.title}\n*┃ 📺 الانمي :* ${selected.animeName}\n*┃ 🔢 رقم الحلقة :* ${selected.epNum === 9999 ? 'غير معروف' : selected.epNum}\n*┃ 📅 تاريخ النزول :* ${selected.date}\n*┃ 👤 الصفحة :* ${selected.author}\n*┃ 📦 الجودة :* ${q.name} - بحجمها الكامل\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*`
       }, { quoted: m })
       await react('✅')
       try { unlinkSync(finalPath) } catch {}
@@ -225,68 +214,44 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     return
   }
 
-  // ===== بحث جديد =====
-  await react('🔍')
-  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
+  // ===== 2. ضغط على زر صفحة - يجيب كل حلقاتها =====
+  if (text.startsWith('page_')) {
+    const old = cache.get(m.chat)
+    const page = old?.pages?.find(x => x.id === text)
+    if (!page) return m.reply('❌ الصفحة انتهت، ابحث من جديد\n.انمي ناروتو')
 
-  try {
-    const { videos, similar, usedQuery } = await searchWide(text, 30)
-    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت حلقات') }
+    await react('🔍')
+    await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
 
-    let results = videos.map(v => {
-        let title = cleanName(getTitle(v))
-        return {
-            id: makeID(),
-            title,
-            animeName: text,
-            epNum: getEpisodeNumber(title),
-            date: getDate(v),
-            author: cleanName(getAuthor(v)),
-            url: getFacebookURL(v),
-            cover: getCover(v)
-        }
-    }).filter(x => x.url)
+    // كل حلقات هذي الصفحة بس، مرتبة
+    let episodes = old.allVideos.filter(v => v.authorId === page.authorId)
+    episodes.sort((a, b) => a.epNum - b.epNum)
+    episodes = episodes.slice(0, 30)
 
-    // ===== الترتيب - مثل مواقع الانمي =====
-    // نرتب من 1 الى الاخير، واللي ما عنده رقم في الاخير
-    results.sort((a, b) => a.epNum - b.epNum)
-    results = results.slice(0, 20)
+    // نحفظ الحلقات عشان زر التحميل
+    cache.set(m.chat, { ...old, time: Date.now(), episodes })
 
-    if (!results.length) { await react('❌'); return m.reply('❌ ما لقيت روابط') }
+    // غلاف الصفحة
+    let coverBuffer = await getImageBuffer(page.cover)
 
-    cache.set(m.chat, { time: Date.now(), results })
-
-    // ===== صورة الغلاف الخرافية =====
-    let coverBuffer = null
-    let mainCover = results.find(r => r.cover)?.cover
-    if (mainCover) {
-        try {
-            const imgRes = await axios.get(mainCover, { responseType: 'arraybuffer', timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' } })
-            coverBuffer = Buffer.from(imgRes.data)
-            if (coverBuffer.length < 5000) coverBuffer = null
-        } catch { coverBuffer = null }
-    }
-
-    for (let chunkStart = 0; chunkStart < results.length; chunkStart += 10) {
-      let chunk = results.slice(chunkStart, chunkStart + 10)
+    for (let chunkStart = 0; chunkStart < episodes.length; chunkStart += 10) {
+      let chunk = episodes.slice(chunkStart, chunkStart + 10)
       let isFirst = chunkStart === 0
 
       let menuText = isFirst
-        ? `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${text}${similar ? `\n*┃ 🔎 مشابه لـ:* ${usedQuery}` : ''}\n*┃ 📊 الحلقات :* ${results.length} حلقة\n*┃ 📅 اخر حلقة :* ${results[results.length - 1]?.date}\n*┃ 👤 المصدر :* ${results[0]?.author}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
-        : `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 تكملة حلقات ${text}*\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
+        ? `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${page.animeName}\n*┃ 👤 الصفحة :* ${page.author}\n*┃ 📊 الحلقات :* ${episodes.length} حلقة\n*┃ 📅 اخر حلقة :* ${episodes[episodes.length - 1]?.date}\n*┃ 🔗 رابط الصفحة :* ${page.pageUrl || 'فيس بوك'}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
+        : `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 تكملة حلقات ${page.animeName} - ${page.author}*\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
 
-      // كل حلقة: رقم + عنوان + تاريخ + مصدر
-      menuText += chunk.map((item) => {
+      menuText += chunk.map(item => {
         let epLabel = item.epNum === 9999 ? item.title : `الحلقة ${item.epNum}`
-        return `*🍥 ${epLabel}*\n📝 ${item.title}\n📅 ${item.date} | 👤 ${item.author}`
+        return `*🍥 ${epLabel}*\n📝 ${item.title}\n📅 ${item.date} | 👤 ${item.author}\n🔗 ${item.url}`
       }).join("\n\n") + `\n\n👇 *اضغط على الحلقة اللي تبيها:*`
 
-      let buttons = chunk.map((item) => {
+      let buttons = chunk.map(item => {
         let epLabel = item.epNum === 9999 ? item.title.slice(0, 20) : `الحلقة ${item.epNum}`
         return { name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: `🍥 ${epLabel}`, id: `.انمي ${item.id}` }) }
       })
 
-      // اذا فيه غلاف، نحطه في الرسالة الاولى بس
       let headerObj = {}
       if (isFirst && coverBuffer) {
         const { imageMessage } = await generateWAMessageContent({ image: coverBuffer }, { upload: conn.waUploadToServer })
@@ -301,9 +266,97 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
           nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
         })}}
       }, { quoted: m })
-
       await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-      if (chunkStart + 10 < results.length) await new Promise(r => setTimeout(r, 600))
+      if (chunkStart + 10 < episodes.length) await new Promise(r => setTimeout(r, 600))
+    }
+    await react('✅')
+    return
+  }
+
+  // ===== 1. بحث جديد - يجيب الصفحات =====
+  await react('🔍')
+  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
+
+  try {
+    const videos = await searchWide(text, 40)
+    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت صفحات') }
+
+    let allVideos = videos.map(v => {
+        let title = cleanName(getTitle(v))
+        return {
+            id: makeID('ep'),
+            title,
+            animeName: text,
+            epNum: getEpisodeNumber(title),
+            date: getDate(v),
+            author: cleanName(getAuthor(v)),
+            authorId: getAuthorId(v),
+            url: getFacebookURL(v),
+            cover: getCover(v),
+            pageCover: getPageCover(v),
+            pageUrl: v.author?.url || v.author?.link || null
+        }
+    }).filter(x => x.url)
+
+    if (!allVideos.length) { await react('❌'); return m.reply('❌ ما لقيت روابط') }
+
+    // ===== نجمع الصفحات - كل صفحة = كل حلقاتها =====
+    let pagesMap = new Map()
+    for (let v of allVideos) {
+        if (!pagesMap.has(v.authorId)) {
+            pagesMap.set(v.authorId, {
+                id: makeID('page'),
+                author: v.author,
+                authorId: v.authorId,
+                animeName: text,
+                cover: v.pageCover,
+                pageUrl: v.pageUrl,
+                count: 0,
+                lastDate: v.date,
+                sampleTitle: v.title
+            })
+        }
+        let p = pagesMap.get(v.authorId)
+        p.count++
+        if (v.date > p.lastDate) p.lastDate = v.date
+    }
+    let pages = Array.from(pagesMap.values())
+    // نرتب الصفحات: اللي عندها حلقات اكثر اول
+    pages.sort((a, b) => b.count - a.count)
+    pages = pages.slice(0, 10)
+
+    cache.set(m.chat, { time: Date.now(), pages, allVideos, episodes: allVideos })
+
+    // ===== نرسل الصفحات - كل صفحة زر + غلاف =====
+    // نرسل كل صفحة رسالة لوحدها عشان غلافها يبين، مثل الفيس
+    for (let i = 0; i < pages.length; i++) {
+        let page = pages[i]
+        let pageEpisodes = allVideos.filter(v => v.authorId === page.authorId).sort((a, b) => a.epNum - b.epNum)
+
+        let menuText = `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${text}\n*┃ 👤 الصفحة / القناة :* ${page.author}\n*┃ 📊 الحلقات :* ${page.count} حلقة\n*┃ 📅 اخر حلقة :* ${page.lastDate}\n*┃ 🎬 من الحلقة ${pageEpisodes[0]?.epNum === 9999 ? '؟' : pageEpisodes[0]?.epNum} الى الحلقة ${pageEpisodes[pageEpisodes.length - 1]?.epNum === 9999 ? '؟' : pageEpisodes[pageEpisodes.length - 1]?.epNum}\n*┃ 🔗 رابط الصفحة :* ${page.pageUrl || 'فيس بوك'}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n👇 *اضغط على الصفحة عشان تشوف كل حلقاتها:*`
+
+        let coverBuffer = await getImageBuffer(page.cover)
+        let headerObj = {}
+        if (coverBuffer) {
+            const { imageMessage } = await generateWAMessageContent({ image: coverBuffer }, { upload: conn.waUploadToServer })
+            if (imageMessage) headerObj = { hasMediaAttachment: true, imageMessage }
+        }
+
+        const msg = generateWAMessageFromContent(m.chat, {
+          viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+            body: proto.Message.InteractiveMessage.Body.create({ text: menuText }),
+            footer: proto.Message.InteractiveMessage.Footer.create({ text: global.watermark || '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡' }),
+            header: proto.Message.InteractiveMessage.Header.fromObject(headerObj),
+            nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+              buttons: [
+                { name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: `📂 فتح حلقات ${page.author.slice(0, 20)}`, id: `.انمي ${page.id}` }) },
+                { name: "cta_url", buttonParamsJson: JSON.stringify({ display_text: "📘 فتح الصفحة في فيس", url: page.pageUrl || `https://www.facebook.com/search/top/?q=${encodeURIComponent(text)}` }) }
+              ]
+            })
+          })}}
+        }, { quoted: m })
+        await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+        await new Promise(r => setTimeout(r, 500))
     }
 
     await react('✅')
