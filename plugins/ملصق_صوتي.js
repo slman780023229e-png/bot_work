@@ -10,9 +10,8 @@ import { promisify } from 'util'
 import ffmpegPath from 'ffmpeg-static'
 
 const execAsync = promisify(execFile)
-const FFMPEG = ffmpegPath // يشتغل في GitHub بدون apt
+const FFMPEG = ffmpegPath
 
-// ===== UPLOAD - نفس كودك =====
 function sha256(b){ return crypto.createHash('sha256').update(b).digest() }
 function base64url(b){ return Buffer.from(b).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'') }
 function encryptMedia(buffer, mediaKey, hkdfInfo){
@@ -48,50 +47,34 @@ async function uploadMedia(conn, buffer, mediaPath, hkdfInfo){
   throw new Error('فشل الرفع')
 }
 
-const handler = async (m, { conn, usedPrefix, command }) => {
+const handler = async (m, { conn, usedPrefix }) => {
   const react = async(e)=>{ try{ await conn.sendMessage(m.chat,{react:{text:e,key:m.key}}) }catch{} }
-
-  // لازم ترد على فيديو
   if(!m.quoted){
     return m.reply(`ارسل فيديو، بعدين رد عليه بـ:\n${usedPrefix}ملصق_صوتي`)
   }
-
   await react('⏳')
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(),'arthur-sound-'))
   try{
-    // 1. حمل نفس الفيديو اللي رديت عليه
     const videoBuffer = await m.quoted.download()
     if(!videoBuffer?.length) throw new Error('ما قدرت احمل الفيديو')
-
     const videoPath = path.join(tmpDir,'video.mp4')
     fs.writeFileSync(videoPath, videoBuffer)
-
     const stickerWebp = path.join(tmpDir,'sticker_001.webp')
     const soundMp3 = path.join(tmpDir,'sound_001.mp3')
-
-    // 2. نفس الفيديو -> ملصق متحرك 512x512، 5 ثواني
     await execAsync(FFMPEG, ['-y','-i',videoPath,'-t','5','-vf','scale=512:512:force_original_aspect_ratio=increase,crop=512:512,fps=15','-c:v','libwebp','-lossless','0','-quality','65','-loop','0', stickerWebp])
-
-    // 3. نفس الصوت اللي في الفيديو
     await execAsync(FFMPEG, ['-y','-i',videoPath,'-t','5','-vn','-c:a','libmp3lame','-q:a','4', soundMp3])
-
     const stickerBuf = fs.readFileSync(stickerWebp)
     if(!fs.existsSync(soundMp3)) throw new Error('هذا الفيديو ما فيه صوت، ارسل فيديو فيه صوت.')
     const soundBuf = fs.readFileSync(soundMp3)
-
-    // 4. سوي حزمة فيها 1 ملصق صوتي
     const trayBuf = await sharp(stickerBuf).resize(96,96,{fit:'cover'}).webp({quality:75}).toBuffer()
     const thumbBuf = await sharp(trayBuf).resize(252,252,{fit:'cover'}).jpeg({quality:80}).toBuffer()
-
     const zip = new JSZip()
     zip.file('sticker_001.webp', stickerBuf)
     zip.file('sound_001.mp3', soundBuf)
     zip.file('tray_icon.webp', trayBuf)
     const archive = await zip.generateAsync({ type:'nodebuffer', compression:'STORE' })
-
     const packUpload = await uploadMedia(conn, archive, '/mms/sticker-pack', 'WhatsApp Sticker Pack Keys')
     const thumbUpload = await uploadMedia(conn, thumbBuf, '/mms/thumbnail-sticker-pack', 'WhatsApp Sticker Pack Thumbnail Keys')
-
     const packId = 'ARTHUR_SOUND_' + crypto.randomUUID()
     const message = {
       messageContextInfo:{ messageSecret: crypto.randomBytes(32) },
@@ -106,11 +89,9 @@ const handler = async (m, { conn, usedPrefix, command }) => {
         thumbnailDirectPath: thumbUpload.directPath, thumbnailSha256: thumbUpload.fileSha256, thumbnailEnc256: thumbUpload.fileSha256, thumbnailHeight:252, thumbnailWidth:252, imageDataHash: thumbUpload.fileSha256.toString('base64')
       }
     }
-
     await conn.relayMessage(m.chat, message, { messageId: crypto.randomBytes(10).toString('hex') })
     await react('✅')
     await m.reply(`تم ✅\nاضغط على الملصق لتسمع نفس صوت الفيديو 🔊`)
-
   }catch(e){
     console.error(e); await react('❌'); await m.reply(`فشل: ${e.message}`)
   }finally{ try{ fs.rmSync(tmpDir,{recursive:true,force:true}) }catch{} }
@@ -118,5 +99,5 @@ const handler = async (m, { conn, usedPrefix, command }) => {
 
 handler.help = ['ملصق_صوتي']
 handler.tags = ['sticker']
-handler.command = /^(ملصق_صوتي|ملصق_صوتي|صوتي|soundsticker)$/i
+handler.command = /^(ملصق_صوتي|ملصق_صوتي|صوتي)$/i
 export default handler
