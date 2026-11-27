@@ -52,14 +52,15 @@ jobs:
           node-version: '24'
 
       # ==========================================
-      # 4. تثبيت المكتبات - تم اصلاحه
+      # 4. تثبيت المكتبات - مضمون 100%
       # ==========================================
       - name: تثبيت مكتبات المشروع
         shell: bash
         run: |
           set -e
           rm -f package-lock.json
-          npm install --no-audit --no-fund
+          rm -rf node_modules
+          npm install --legacy-peer-deps --no-audit --no-fund
           echo "✅ تم تثبيت المكتبات بنجاح"
 
       # ==========================================
@@ -98,9 +99,8 @@ jobs:
           add_ignore "*.pfx"
           add_ignore "*.log"
           add_ignore "**/*.tmp"
+          add_ignore "package-lock.json"
 
-          # إخراج كل الملفات المتتبعة التي أصبحت مستثناة
-          # دون حذفها من بيئة التشغيل
           git ls-files -ci --exclude-standard -z |
             xargs -0 -r git rm --cached --ignore-unmatch --
 
@@ -124,46 +124,34 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # ======================================
-          # دالة الحفظ والرفع
-          # ======================================
           save_changes() {
-
             echo "======================================"
             echo "🔍 فحص جميع ملفات المشروع..."
             echo "======================================"
 
-            # جمع جميع الإضافات والتعديلات والحذف
             git add -A -- . || {
               echo "❌ فشل جمع ملفات المشروع"
               return 1
             }
 
-            # عرض الملفات التي ستدخل في الحفظ
             if ! git diff --cached --quiet; then
-
               echo "📦 الملفات التي سيتم حفظها:"
               git diff --cached --name-status
-
               git commit -m "Auto-save ARTHUR BOT" || {
                 echo "❌ فشل إنشاء Commit"
                 return 1
               }
-
               echo "✅ تم إنشاء Commit محلي"
-
             else
               echo "ℹ️ لا توجد تعديلات جديدة"
             fi
 
-            # جلب آخر تحديثات GitHub
             git fetch origin \
               "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
                 echo "❌ فشل جلب تحديثات GitHub"
                 return 1
               }
 
-            # حساب التعديلات التي لم ترفع
             AHEAD=$(git rev-list --count \
               "origin/${GITHUB_REF_NAME}..HEAD") || return 1
 
@@ -172,37 +160,28 @@ jobs:
               return 0
             fi
 
-            # ==================================
-            # الرفع مع إعادة المحاولة
-            # ==================================
             ATTEMPT=1
 
             while [ "$ATTEMPT" -le 3 ]; do
-
               echo "📤 محاولة الرفع رقم $ATTEMPT"
-
               if git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"; then
                 echo "======================================"
                 echo "✅ تأكد نجاح رفع التعديلات إلى GitHub"
                 echo "======================================"
                 return 0
               fi
-
               echo "⚠️ فشل الرفع، جاري جلب التحديثات والمزامنة"
-
               git fetch origin \
                 "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" || {
                   echo "❌ تعذر جلب التحديثات"
                   return 1
                 }
-
               git -c rebase.autoStash=true rebase \
                 "origin/${GITHUB_REF_NAME}" || {
                   git rebase --abort || true
                   echo "❌ تعارض أثناء Rebase"
                   return 1
                 }
-
               ATTEMPT=$((ATTEMPT + 1))
             done
 
@@ -210,87 +189,56 @@ jobs:
             return 1
           }
 
-          # ======================================
-          # إيقاف البوت والحفظ النهائي
-          # ======================================
           cleanup_and_exit() {
-
             echo "🛑 جاري إيقاف البوت..."
-
             if [ -n "${BOT_PID:-}" ]; then
               kill -TERM "$BOT_PID" 2>/dev/null || true
               wait "$BOT_PID" 2>/dev/null || true
               BOT_PID=""
             fi
-
             save_changes || echo "❌ فشل الحفظ النهائي"
-
             exit "${1:-0}"
           }
 
           trap 'cleanup_and_exit 0' SIGTERM SIGINT
 
-          # ======================================
-          # بداية التشغيل
-          # ======================================
           echo "======================================"
           echo "          ARTHUR BOT RUNNER"
           echo "             NODE.JS 24"
           echo "======================================"
 
-          # حفظ أي تعديلات قبل بدء البوت
           save_changes || echo "⚠️ فشل الحفظ الأول، ستتم إعادة المحاولة"
 
           RESTART_DELAY=5
 
           while true; do
-
             echo "🚀 جاري تشغيل ARTHUR BOT..."
-
             node start.js &
             BOT_PID=$!
-
             echo "✅ بدأ البوت PID: $BOT_PID"
-
             LAST_SAVE=$(date +%s)
-
             while kill -0 "$BOT_PID" 2>/dev/null; do
-
               sleep 5
-
               NOW=$(date +%s)
-
               if [ $((NOW - LAST_SAVE)) -ge 300 ]; then
-
                 echo "⏳ بدأ الحفظ الدوري..."
-
                 save_changes || \
                   echo "❌ فشل الحفظ الدوري، ستتم إعادة المحاولة"
-
                 LAST_SAVE=$(date +%s)
               fi
-
             done
-
             wait "$BOT_PID"
             BOT_STATUS=$?
             BOT_PID=""
-
             echo "⚠️ توقف البوت. رمز الخروج: $BOT_STATUS"
-
             save_changes || \
               echo "❌ فشل الحفظ بعد توقف البوت"
-
             echo "🔄 إعادة تشغيل البوت بعد ${RESTART_DELAY} ثوانٍ"
-
             sleep "$RESTART_DELAY"
-
             RESTART_DELAY=$((RESTART_DELAY + 2))
-
             if [ "$RESTART_DELAY" -gt 30 ]; then
               RESTART_DELAY=30
             fi
-
           done
 
       # ==========================================
