@@ -1,5 +1,5 @@
 // plugins/بينترف.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - كروسيل فيديو + تحويل سكته وسريع ✅
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - الكود الأعظم - كروسيل فيديو + سكته + سريع ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
@@ -117,16 +117,14 @@ async function searchSmart(query, needed = 20) {
    return { videos: videos.slice(0, needed), similar: videos.length < 5, usedQuery: query }
 }
 
-// ===== تحويل سكته وسريع - بدون ما يقول شي =====
+// ===== تحويل سكته وسريع =====
 async function convertSilent(inputPath, outputPath) {
    const ffmpegPath = ffmpegStatic
    if (!ffmpegPath || !existsSync(ffmpegPath)) return false
-   // 1. remux سريع - 1 ثانية
    try {
       await execAsync(`"${ffmpegPath}" -y -v error -i "${inputPath}" -c copy -movflags +faststart "${outputPath}"`, { timeout: 30000 })
       if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
    } catch { try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
-   // 2. اعادة ترميز خفيفة - بس اذا الاولى فشلت
    try {
       await execAsync(`"${ffmpegPath}" -y -v error -i "${inputPath}" -c:v libx264 -preset ultrafast -crf 30 -c:a aac -b:a 96k -movflags +faststart -vf "scale='min(720,iw)':-2" "${outputPath}"`, { timeout: 60000 })
       if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
@@ -151,6 +149,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   // تحميل من رابط - سكته
   if (text.includes('pin.it') || text.includes('pinterest.com/pin/')) {
     await react('⏳')
+    await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
     try {
       const rawPath = join(tmpdir(), `pin_raw_${Date.now()}.mp4`)
       const finalPath = join(tmpdir(), `pin_${Date.now()}.mp4`)
@@ -166,9 +165,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     return
   }
 
+  // ===== البداية - الرسالة اللي طلبتها =====
   await react('🔍')
-  // ما فيه اي رسالة "جاري التحويل" هنا، سكته
+  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
 
+  // من هنا كل شي سكته، بدون اي رسالة تحويل
   try {
     const { videos, similar, usedQuery } = await searchSmart(text, 20)
     if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات') }
@@ -179,7 +180,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       let rawPath = join(tmpdir(), `raw_${Date.now()}_${i}.mp4`)
       let finalPath = join(tmpdir(), `final_${Date.now()}_${i}.mp4`)
       try {
-        // نحمل ونحول سكته، بدون رسائل
         const vidRes = await axios.get(v.videoUrl, {
           responseType: 'arraybuffer',
           headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pinterest.com/' },
@@ -189,7 +189,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         if (statSync(rawPath).size < 5000) continue
 
         let ok = await convertSilent(rawPath, finalPath)
-        if (!ok) copyFileSync(rawPath, finalPath) // اذا فشل التحويل، ارسل الاصلي سكته
+        if (!ok) copyFileSync(rawPath, finalPath)
 
         if (!existsSync(finalPath) || statSync(finalPath).size < 5000) continue
         if (statSync(finalPath).size > 16 * 1024 * 1024) continue
@@ -211,7 +211,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             ]
           })
         })
-      } catch { continue } // سكته، اذا فشل فيديو، نتخطاه بدون ما نقول شي
+      } catch { continue }
       finally {
         try { if (existsSync(rawPath)) unlinkSync(rawPath) } catch {}
         try { if (existsSync(finalPath)) unlinkSync(finalPath) } catch {}
