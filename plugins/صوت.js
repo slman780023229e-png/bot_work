@@ -10,7 +10,6 @@ import FormData from 'form-data'
 const execAsync = promisify(execFile)
 const FFMPEG = ffmpegPath
 
-// حط مفتاحك هنا مباشرة، عشان نجرب بدون .env
 const elevenKey = 'sk_997a18b66c4b4aeaa7b3d1d3751bb4aae38c9f4c53e638a9'
 
 const handler = async (m, { conn, text, usedPrefix }) => {
@@ -26,31 +25,42 @@ const handler = async (m, { conn, text, usedPrefix }) => {
   const samplePath = path.join(tmpDir,'sample.mp3')
 
   try{
-    let voiceId = null
+    // === هنا كان الخطأ، صححته ===
+    let quoted = m.quoted || m.msg?.contextInfo?.quotedMessage
+    if(!quoted) return m.reply(`لازم ترد على فويس!\nارسل فويس 15 ثانية، ورد عليه واكتب:\n${usedPrefix}صوت هلا والله`)
 
-    // اذا رديت على فويس، انسخ صوته
-    if(m.quoted && (m.quoted.mimetype?.includes('audio') || m.quoted.msg?.mimetype?.includes('audio'))){
-      await m.reply(`سمعت الفويس، الحين بنسخ صوته... ⏳`)
-      const voiceBuffer = await m.quoted.download()
-      if(!voiceBuffer?.length) throw new Error('ما قدرت احمل الفويس')
-      fs.writeFileSync(samplePath, voiceBuffer)
+    await m.reply(`سمعت الفويس، الحين بنسخ صوته... ⏳`)
 
-      const form = new FormData()
-      form.append('name', `temp_${Date.now()}`)
-      form.append('files', fs.createReadStream(samplePath), { filename: 'sample.mp3', contentType: 'audio/mpeg' })
-      form.append('description', 'clone from reply')
-
-      const cloneRes = await axios.post('https://api.elevenlabs.io/v1/voices/add', form, {
-        headers: { 'xi-api-key': elevenKey, ...form.getHeaders() },
-        timeout: 60000
-      })
-      voiceId = cloneRes.data?.voice_id
-      if(!voiceId) throw new Error('فشل استنساخ الصوت، جرب فويس اطول من 10 ثواني واوضح')
-    } else {
-      return m.reply(`لازم ترد على فويس!\nارسل فويس 15 ثانية، ورد عليه واكتب:\n${usedPrefix}صوت هلا والله`)
+    // طريقة تحميل الفويس الصحيحة للبوت حقك
+    let voiceBuffer = null
+    try {
+      // الطريقة 1: عن طريق conn
+      voiceBuffer = await conn.downloadMediaMessage(quoted)
+    } catch(e) {
+      console.log('downloadMediaMessage failed', e.message)
     }
+    if(!voiceBuffer?.length && typeof quoted.download === 'function') {
+      try { voiceBuffer = await quoted.download() } catch {}
+    }
+    if(!voiceBuffer?.length && m.quoted?.download) {
+      try { voiceBuffer = await m.quoted.download() } catch {}
+    }
+    if(!voiceBuffer?.length) throw new Error('ما قدرت احمل الفويس، جرب ترد على الفويس مرة ثانية')
 
-    // انطق الكلام الجديد بنفس الصوت
+    fs.writeFileSync(samplePath, voiceBuffer)
+
+    const form = new FormData()
+    form.append('name', `temp_${Date.now()}`)
+    form.append('files', fs.createReadStream(samplePath), { filename: 'sample.mp3', contentType: 'audio/mpeg' })
+    form.append('description', 'clone from reply')
+
+    const cloneRes = await axios.post('https://api.elevenlabs.io/v1/voices/add', form, {
+      headers: { 'xi-api-key': elevenKey, ...form.getHeaders() },
+      timeout: 60000
+    })
+    const voiceId = cloneRes.data?.voice_id
+    if(!voiceId) throw new Error('فشل استنساخ الصوت، جرب فويس اطول من 10 ثواني واوضح')
+
     const { data } = await axios.post(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       text: input,
       model_id: 'eleven_multilingual_v2',
@@ -67,7 +77,6 @@ const handler = async (m, { conn, text, usedPrefix }) => {
     await conn.sendMessage(m.chat, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m })
     await react('✅')
 
-    // امسح الصوت المؤقت
     try{ await axios.delete(`https://api.elevenlabs.io/v1/voices/${voiceId}`, { headers: { 'xi-api-key': elevenKey } }) }catch{}
 
   }catch(e){
