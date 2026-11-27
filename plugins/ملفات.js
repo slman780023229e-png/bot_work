@@ -70,6 +70,37 @@ const getAllProjectFiles = (rootDir, currentDir = rootDir, result = []) => {
     return result;
 };
 
+// ترتيب الملفات وتجميعها تحت اسم كل مجلد
+const groupFilesByFolder = (files) => {
+    const grouped = new Map();
+
+    for (const relPath of files) {
+        const parts = relPath.split('/');
+        const folderName = parts.length > 1 ? parts.slice(0, -1).join('/') : 'المجلد الرئيسي';
+        const fileName = parts[parts.length - 1];
+
+        if (!grouped.has(folderName)) {
+            grouped.set(folderName, []);
+        }
+        grouped.get(folderName).push(fileName);
+    }
+
+    // ترتيب المجلدات بحيث يكون المجلد الرئيسي أولاً ثم الباقي أبجدياً
+    const sortedFolders = [...grouped.keys()].sort((a, b) => {
+        if (a === 'المجلد الرئيسي') return -1;
+        if (b === 'المجلد الرئيسي') return 1;
+        return a.localeCompare(b, 'ar');
+    });
+
+    const result = new Map();
+    for (const folder of sortedFolders) {
+        const sortedFiles = grouped.get(folder).sort((a, b) => a.localeCompare(b, 'ar'));
+        result.set(folder, sortedFiles);
+    }
+
+    return result;
+};
+
 let handler = async (m, { conn, args, usedPrefix, command }) => {
 
     const react = async (e) => {
@@ -236,7 +267,7 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
         return;
     }
 
-    // ⭐ لست
+    // ⭐ لست - مرتبة حسب المجلدات مع رموز واضحة
     if (/^(لست|list|قائمة)$/i.test(action)) {
         const filterFolder = args.slice(1).join(" ").trim().toLowerCase();
         let files = getAllProjectFiles(rootDir).filter(f => f !== currentFileRel);
@@ -246,18 +277,26 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
         }
 
         if (!files.length) {
-            await react("📁");
+            await react("📂");
             return m.reply(formatBox([
-                `*قـائـمـة الـمـلـفـات*`,
-                `*الحالة:* لا توجد ملفات مطابقة`
+                `📂 *قـائـمـة الـمـلـفـات*`,
+                `🗂️ *الحالة:* لا توجد ملفات مطابقة`
             ]));
         }
 
-        const lines = [`*مـلـفـات الـمـشـروع - ARTHUR BOT*`];
-        files.forEach((f, i) => lines.push(`*${i + 1}.* ${f}`));
-        lines.push(`*المجموع:* ${files.length} ملف (مستثنى الجلسات والمكتبات)`);
+        const grouped = groupFilesByFolder(files);
+        const lines = [`🗂️ *مـلـفـات الـمـشـروع - ARTHUR BOT*`];
 
-        await react("📁");
+        for (const [folder, folderFiles] of grouped.entries()) {
+            lines.push(`📂 *${folder}* (${folderFiles.length})`);
+            folderFiles.forEach((file, idx) => {
+                lines.push(`   📄 ${idx + 1}. ${file}`);
+            });
+        }
+
+        lines.push(`📊 *المجموع:* ${files.length} ملف في ${grouped.size} مجلد`);
+
+        await react("📂");
         return m.reply(formatBox(lines));
     }
 
@@ -409,12 +448,12 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
     // القائمة الافتراضية
     await react("📁");
     return m.reply(formatBox([
-        `*إدارة مـلـفـات الـبـوت - ARTHUR BOT*`,
-        `*${usedPrefix + command} لست:* عرض كل الملفات`,
-        `*${usedPrefix + command} لست core:* ملفات مجلد معين`,
-        `*${usedPrefix + command} عرض <مسار>:* عرض الكود`,
-        `*${usedPrefix + command} اضف [مسار]:* حفظ أو تعديل ملف`,
-        `*${usedPrefix + command} حذف <مسار>:* حذف ملف`
+        `🗂️ *إدارة مـلـفـات الـبـوت - ARTHUR BOT*`,
+        `📂 *${usedPrefix + command} لست:* عرض الملفات مرتبة بالمجلدات`,
+        `📂 *${usedPrefix + command} لست core:* ملفات مجلد معين`,
+        `📄 *${usedPrefix + command} عرض <مسار>:* عرض الكود`,
+        `✏️ *${usedPrefix + command} اضف [مسار]:* حفظ أو تعديل ملف`,
+        `🗑️ *${usedPrefix + command} حذف <مسار>:* حذف ملف`
     ]));
 };
 
