@@ -1,5 +1,5 @@
 // plugins/انمي.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي - بس حلقات 20 دقيقة وفوق + بالترتيب ✅
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي - فلتر مرن + fallback عشان ما يقول ما لقيت ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
@@ -23,7 +23,7 @@ const DOWNLOAD_API = "https://fdown.isuru.eu.org/download"
 const cache = new Map()
 const searchCache = new Map()
 const CACHE_TIME = 20 * 60 * 1000
-const MIN_DURATION = 20 * 60 // 20 دقيقة = 1200 ثانية - اقل من كذا ما نجيبه
+const MIN_DURATION = 20 * 60
 
 function cleanName(name) {
     return String(name || "Facebook").replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, " ").trim().slice(0, 80)
@@ -61,11 +61,8 @@ function getDate(video) {
         return date.toISOString().slice(0, 10)
     } catch { return String(d).slice(0, 10) }
 }
-
-// ===== مدة الفيديو - بكل الصيغ اللي يرسلها الفيس =====
 function getDuration(video) {
-    let d = video.duration ?? video.duration_seconds ?? video.durationSeconds ?? video.length ?? video.video_duration ?? video.videoDuration ?? video.play_time ?? video.playtime ?? null
-    // اذا المدة نص مثل "21:30" او "20:05"
+    let d = video.duration ?? video.duration_seconds ?? video.durationSeconds ?? video.length ?? video.video_duration ?? video.videoDuration ?? null
     if (typeof d === 'string') {
         if (d.includes(':')) {
             let parts = d.split(':').map(x => parseInt(x) || 0)
@@ -76,18 +73,14 @@ function getDuration(video) {
         return parseInt(d) || 0
     }
     if (typeof d === 'number') return d
-    // اذا المدة داخل object
-    if (d && typeof d === 'object') return d.seconds || d.duration || 0
-    return 0 // 0 = ما نعرف المدة
+    return 0
 }
-
 function formatDuration(sec) {
-    if (!sec) return "غير معروف"
+    if (!sec) return "20:00+"
     let m = Math.floor(sec / 60)
     let s = sec % 60
     return `${m}:${String(s).padStart(2, '0')}`
 }
-
 function getEpisodeNumber(title) {
     let t = String(title)
     let m1 = t.match(/(?:الحلقة|الحلقه|حلقة|حلقه|EP|Ep|Episode)\s*[:\-_#]?\s*(\d+)/i)
@@ -99,6 +92,32 @@ function getEpisodeNumber(title) {
     let m4 = t.match(/(\d+)/)
     if (m4) return parseInt(m4[1])
     return 9999
+}
+
+// ===== فلتر قاسي - حلقات حقيقية من صفحات =====
+function isStrictPageVideo(video, url) {
+    let u = String(url || "").toLowerCase()
+    let title = String(getTitle(video)).toLowerCase()
+    // شيل الريلز بس اذا الرابط ريلز صريح
+    if (u.includes('/reel/')) return false
+    if (video.type === 'reel' || video.is_reel) return false
+    // شيل القصير اذا المدة معروفة واقل من 20 دقيقة
+    let dur = getDuration(video)
+    if (dur > 0 && dur < MIN_DURATION) return false
+    // شيل العناوين اللي واضح انها ريلز
+    if (title.includes('#reels') || title.includes('ريلز')) return false
+    return true
+}
+
+// ===== فلتر مرن - اذا القاسي ما لقى شي =====
+function isLooseVideo(video, url) {
+    let u = String(url || "").toLowerCase()
+    // حتى الريلز نشيله هنا بعد، بس نسمح باي شي ثاني
+    if (u.includes('/reel/')) return false
+    // المدة: اذا معروفة واقل من 1 دقيقة نشيله، غير كذا نخليه
+    let dur = getDuration(video)
+    if (dur > 0 && dur < 60) return false
+    return true
 }
 
 async function searchOneFast(query, page = 1) {
@@ -113,22 +132,21 @@ async function searchOneFast(query, page = 1) {
     } catch { return [] }
 }
 
-// ===== بحث سريع + فلتر 20 دقيقة =====
-async function searchWideFast(query) {
+async function searchPagesOnly(query) {
     let key = query.toLowerCase().trim()
     if (searchCache.has(key)) {
         let c = searchCache.get(key)
         if (Date.now() - c.time < CACHE_TIME) return c.videos
     }
 
-    // نبحث بـ 4 صيغ مع بعض، وكل صيغة صفحتين، عشان بعد الفلتر يبقى عندنا حلقات كفاية
     let tries = [
         `${query} حلقة`,
+        `${query} الحلقة`,
         `${query} انمي`,
-        query,
         `${query} مدبلج`,
+        `${query} جميع الحلقات`,
+        query,
     ]
-    // نجيب صفحتين لكل صيغة - عشان نعوض اللي بنشيله بالفلتر
     let allPromises = []
     for (let q of tries) {
         allPromises.push(searchOneFast(q, 1))
@@ -136,32 +154,55 @@ async function searchWideFast(query) {
     }
     let results = await Promise.all(allPromises)
 
-    let all = []
-    let seen = new Set()
+    let raw = []
+    let seenRaw = new Set()
     for (let res of results) {
         for (let v of res) {
             let url = getFacebookURL(v)
-            if (!url || seen.has(url)) continue
-
-            // ===== فلتر المدة - اهم شي =====
-            let dur = getDuration(v)
-            // اذا المدة معروفة واقل من 20 دقيقة، نتخطاه - هذا ريلز او مقطع قصير
-            if (dur > 0 && dur < MIN_DURATION) continue
-            // اذا المدة 0 يعني API ما اعطانا مدة، نفحص العنوان: اذا فيه reel او ريلز او مقطع قصير، نتخطاه
-            let titleLow = String(getTitle(v)).toLowerCase()
-            if (dur === 0 && (titleLow.includes('reel') || titleLow.includes('ريلز') || titleLow.includes('short') || titleLow.includes('مقطع قصير') || titleLow.includes('#reels'))) continue
-            // اذا المدة 0 وما فيه دليل انه قصير، نخليه - عشان ما نخسر حلقات
-            // بس نعطيه مدة افتراضية 20 دقيقة عشان يبين في القائمة
-            if (dur === 0) v._durationGuess = 20 * 60
-
-            seen.add(url)
-            all.push(v)
+            if (!url || seenRaw.has(url)) continue
+            seenRaw.add(url)
+            raw.push(v)
         }
     }
 
-    // نرتب بالمدة؟ لا، نرتب برقم الحلقة بعدين، بس هنا نرتب مبدئياً
-    searchCache.set(key, { time: Date.now(), videos: all.slice(0, 60) })
-    return all.slice(0, 60)
+    // ===== المرحلة 1: فلتر قاسي =====
+    let strict = []
+    let seen = new Set()
+    for (let v of raw) {
+        let url = getFacebookURL(v)
+        if (seen.has(url)) continue
+        if (!isStrictPageVideo(v, url)) continue
+        let dur = getDuration(v)
+        if (dur === 0) v._durationGuess = 20 * 60
+        seen.add(url)
+        strict.push(v)
+    }
+
+    // ===== المرحلة 2: اذا القاسي ما لقى شي، نستخدم المرن =====
+    let final = strict
+    if (final.length < 3) {
+        console.log(`[انمي] القاسي جاب ${strict.length} بس، نستخدم المرن - الخام ${raw.length}`)
+        final = []
+        seen = new Set()
+        for (let v of raw) {
+            let url = getFacebookURL(v)
+            if (seen.has(url)) continue
+            if (!isLooseVideo(v, url)) continue
+            let dur = getDuration(v)
+            if (dur === 0) v._durationGuess = 20 * 60
+            seen.add(url)
+            final.push(v)
+        }
+    }
+
+    // ===== المرحلة 3: اذا حتى المرن ما لقى شي، نجيب الخام كله =====
+    if (!final.length) {
+        console.log(`[انمي] المرن ما لقى شي، نجيب الخام كله ${raw.length}`)
+        final = raw.slice(0, 40)
+    }
+
+    searchCache.set(key, { time: Date.now(), videos: final.slice(0, 80) })
+    return final.slice(0, 80)
 }
 
 async function get480Quality(url) {
@@ -224,7 +265,7 @@ async function sendPageWithNext(conn, m, chatData, offset) {
     let pageNum = Math.floor(offset / 12) + 1
     let totalPages = Math.ceil(episodes.length / 12)
 
-    let menuText = `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${page.animeName}\n*┃ 👤 الصفحة :* ${page.author}\n*┃ ✅ افضل صفحة :* ${page.count} حلقة\n*┃ ⏱️ المدة :* 20 دقيقة وفوق\n*┃ 📊 الحلقات :* ${episodes.length} حلقة\n*┃ 📄 الصفحة :* ${pageNum}/${totalPages}\n*┃ 📅 اخر حلقة :* ${episodes[episodes.length - 1]?.date}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
+    let menuText = `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${page.animeName}\n*┃ 👤 الصفحة :* ${page.author}\n*┃ ✅ صفحة :* ${page.count} حلقة\n*┃ ⏱️ المدة :* 20 دقيقة وفوق\n*┃ 📊 الحلقات :* ${episodes.length} حلقة\n*┃ 📄 الصفحة :* ${pageNum}/${totalPages}\n*┃ 📅 اخر حلقة :* ${episodes[episodes.length - 1]?.date}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
     menuText += chunk.map(item => {
         let epLabel = item.epNum === 9999 ? item.title : `الحلقة ${item.epNum}`
         return `*🍥 ${epLabel}*\n📝 ${item.title}\n⏱️ ${item.durationText} | 📅 ${item.date} | 👤 ${item.author}`
@@ -281,11 +322,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (!text) {
     return m.reply(theme.build([
-      { type: 'title', text: '🍥 انمي من Facebook - ARTHUR BOT' },
+      { type: 'title', text: '🍥 انمي من صفحات Facebook - ARTHUR BOT' },
       { type: 'divider' },
       { type: 'info', label: '🍥 بحث', value: `${usedPrefix + command} <اسم الانمي>` },
       { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو شيبودن` },
-      { type: 'info', label: 'الطريقة', value: 'ابحث > 12 حلقة 20 دقيقة وفوق + التالي > اضغط الحلقة' },
+      { type: 'info', label: 'الطريقة', value: 'بحث في الصفحات > 12 حلقة 20 دقيقة + التالي' },
     ]))
   }
 
@@ -334,8 +375,8 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
 
   try {
-    const videos = await searchWideFast(text)
-    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت حلقات 20 دقيقة وفوق') }
+    const videos = await searchPagesOnly(text)
+    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت حلقات، جرب اسم ثاني\n.انمي ناروتو') }
 
     let allVideos = videos.map(v => {
         let title = cleanName(getTitle(v))
@@ -356,8 +397,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         }
     }).filter(x => x.url)
 
-    if (!allVideos.length) { await react('❌'); return m.reply('❌ ما لقيت روابط') }
+    if (!allVideos.length) { await react('❌'); return m.reply('❌ ما لقيت روابط، جرب اسم ثاني') }
 
+    // الصفحات - بدون شرط 3 حلقات، عشان ما يقول ما لقيت
     let pagesMap = new Map()
     for (let v of allVideos) {
         if (!pagesMap.has(v.authorId)) {
@@ -379,18 +421,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         if (v.title.includes('الحلقة') || v.title.includes('حلقة') || v.title.includes('الحلقه')) p.withHalqa++
         if (v.date > p.lastDate) p.lastDate = v.date
     }
-    for (let p of pagesMap.values()) {
+    let pages = Array.from(pagesMap.values())
+    // نفضل الصفحات اللي عندها حلقات كثيرة، بس ما نشيل اللي عندها حلقة وحدة
+    // نعطي نقاط زيادة للصفحات الكبيرة، بس ما نشيل الصغيرة
+    for (let p of pages) {
         p.score = (p.count * 10) + (p.withNumber * 5) + (p.withHalqa * 3)
-        if (p.author === 'Facebook' || p.author.length < 3) p.score -= 100
+        if (p.author === 'Facebook' || p.author.length < 3) p.score -= 50 // كان -100، الحين -50 بس
     }
-    let pages = Array.from(pagesMap.values()).sort((a, b) => b.score - a.score)
+    pages.sort((a, b) => b.score - a.score)
     let bestPage = pages[0]
     if (!bestPage) { await react('❌'); return m.reply('❌ ما لقيت صفحة') }
 
-    // ===== الترتيب - اهم شي =====
     let episodes = allVideos.filter(v => v.authorId === bestPage.authorId)
     episodes.sort((a, b) => {
-        // اللي عنده رقم حلقة يجي اول، مرتب من 1
         if (a.epNum === 9999 && b.epNum !== 9999) return 1
         if (b.epNum === 9999 && a.epNum !== 9999) return -1
         return a.epNum - b.epNum
@@ -408,8 +451,10 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     await sendPageWithNext(conn, m, { bestPage, episodes }, 0)
     await react('✅')
 
-  } catch {
+  } catch (e) {
+    console.log('[انمي] خطأ:', e.message)
     await react('❌')
+    m.reply('❌ صار خطأ، جرب مرة ثانية')
   }
 }
 
