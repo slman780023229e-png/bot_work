@@ -71,7 +71,6 @@ async function searchSmart(query, needed = 20) {
     return { videos: videos.slice(0, needed), similar: videos.length < 5, usedQuery: query }
 }
 
-// ===== جيب اخف جودة - هي اصلا صغيرة، بدون ضغط =====
 async function getLightQuality(url) {
     try {
         const response = await axios.post(DOWNLOAD_API, { url }, {
@@ -87,7 +86,6 @@ async function getLightQuality(url) {
                 if (val && typeof val === "string") {
                     let k = String(key).toLowerCase()
                     let priority = 10
-                    // الاخف اول شي
                     if (k.includes("144") || k.includes("240")) priority = 1
                     else if (k.includes("360") || k.includes("low") || k.includes("sd") || k.includes("normal")) priority = 2
                     else if (k.includes("480")) priority = 3
@@ -104,12 +102,10 @@ async function getLightQuality(url) {
     } catch { return null }
 }
 
-// ===== بدون ضغط ابدا - remux بس، ينقل الفيديو مثل ما هو =====
 async function remuxOnly(inputPath, outputPath) {
    const ffmpegPath = ffmpegStatic
    if (!ffmpegPath || !existsSync(ffmpegPath)) return false
    try {
-      // -c copy = بدون ضغط، بدون اعادة ترميز، بدون تصغير، بحجمه الكامل
       await execAsync(`"${ffmpegPath}" -y -v error -i "${inputPath}" -c copy -movflags +faststart "${outputPath}"`, { timeout: 30000 })
       if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
    } catch { try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
@@ -132,7 +128,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   if (text.includes('facebook.com') || text.includes('fb.watch') || text.includes('fb.gg')) {
     await react('⏳')
-    await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
+    await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
     try {
       let q = await getLightQuality(text)
       if (!q) throw new Error('ما لقيت جودة')
@@ -151,14 +147,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   }
 
   await react('🔍')
-  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
+  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الفيديوهات...')
 
   try {
     const { videos, similar, usedQuery } = await searchSmart(text, 20)
     if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات') }
 
     let cards = []
-    let bigVideos = [] // الفيديوهات الكبيرة اللي ما تدخل الكروسيل، بنرسلها بعدين بحجمها الكامل
+    let bigVideos = []
 
     for (let start = 0; start < videos.length && cards.length < 10; start += 3) {
       let batch = videos.slice(start, start + 3)
@@ -180,7 +176,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
           writeFileSync(rawPath, Buffer.from(vidRes.data))
           if (statSync(rawPath).size < 5000) return null
 
-          // بدون ضغط، بحجمه الكامل
           let ok = await remuxOnly(rawPath, finalPath)
           if (!ok) copyFileSync(rawPath, finalPath)
           if (!existsSync(finalPath) || statSync(finalPath).size < 5000) return null
@@ -189,7 +184,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
           if (buffer[0] === 0xFF && buffer[1] === 0xD8) return null
           if (buffer.slice(1,4).toString() === 'PNG') return null
 
-          // اذا اكبر من 16MB، ما نضغطه ولا نتخطاه، نحفظه عشان نرسله بعد الكروسيل بحجمه الكامل
           if (buffer.length > 16 * 1024 * 1024) {
             return { big: true, title, author, fbUrl, buffer, sizeMB: (buffer.length / 1024 / 1024).toFixed(1) }
           }
@@ -217,7 +211,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       for (let r of results) {
         if (!r) continue
         if (r.big) {
-          // نحفظ الكبير، بنرسله بعد الكروسيل
           if (bigVideos.length < 5) bigVideos.push(r)
           continue
         }
@@ -228,7 +221,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     }
 
-    // اذا ما فيه كروسيل بس فيه فيديوهات كبيرة، نرسلها عادية
     if (!cards.length && !bigVideos.length) { await react('❌'); return }
 
     if (cards.length) {
@@ -242,7 +234,6 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id })
     }
 
-    // نرسل الفيديوهات الكبيرة بحجمها الكامل، بدون ضغط، فيديو عادي
     for (let b of bigVideos) {
       try {
         await conn.sendMessage(m.chat, {
