@@ -18,7 +18,7 @@ const __dirname = path.dirname(__filename)
 
 const ownerNumber = '967780023229'
 const channelUrl = 'https://whatsapp.com/channel/0029XXXXXXXX'
-const defaultImageUrl = 'https://pomf2.lain.la/f/3ohvpe3a.jpeg'
+const defaultImageUrl = 'https://files.catbox.moe/c4xoo3.jpg'
 
 // صور الأقسام مع تصغير يحافظ على الوجه بالكامل وقص سفلي طفيف جدًا (0.05)
 const SECTION_IMAGES = {
