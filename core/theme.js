@@ -1,74 +1,88 @@
 // core/theme.js
 // ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Evernight Unit No.2 Type B - Core Theme ✧
-// ⚡⚡ ARTHUR - ALL IN ONE + LIGHTNING ⚡⚡
 
 export const theme = {
-  // الرموز الأساسية - من كل شي
-  skull: '❄️',
+  // الرموز الأساسية
+  frost: '❄️',
   blood: '🩸',
-  virus: '🗡️',
+  blade: '🗡️',
   eye: '🔮',
   sword: '⚔️',
   target: '✧',
   lightning: '⚡',
   moon: '☾',
-  demon: '𖤐',
-  eyeHorus: '𓂀',
+  mark: '𖤐',
+  horus: '𓂀',
   crown: '👑',
-  darkStar: '𓉘᳟ี ⃞̸͢𑁃 ̚𓉝᳟ี',
-  lightStar: '❄️ּ۪᪲۫ᮬ',
 
-  // فواصل 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - نفس صندوقك بس مع كل الرموز والبرق أكثر
-  divider: '*◇❐ ═━━╾⚡⚡⚡ ╼━━═ ❐◇*',
-  smallDivider: '*┃* ⚡ ╎ ── ❄️ ⚔️ 🩸 🔮 𓂀 𖤐 ☾ 👑 ── ⚡',
-  endDivider: '*◇❐ ═━━╾⚡⚡⚡╼━━═ ❐◇*',
+  // الفواصل
+  divider: '*◇❐ ═━━╾ ⚡ ╼━━═ ❐◇*',
+  endDivider: '*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*',
 
-  // تنسيق النص - البرق في كل شي
+  // تنسيق النصوص
   title: (text) => `⚡ *${text}*`,
-  subtitle: (text) => `⚡ *${text}*`,
-  info: (text) => `⚡ *${text}*`,
-  warning: (text) => `⚡ *${text}* ⚡`,
-  success: (text) => `⚡ *${text}*`,
-  error: (text) => `⚡ *${text}*`,
+  subtitle: (text) => `⚔️ *${text}*`,
+  info: (text) => `🔮 *${text}*`,
+  warning: (text) => `⚡ *${text}*`,
+  success: (text) => `✧ *${text}*`,
+  error: (text) => `🩸 *${text}*`,
 
-  // build full message - بنفس صندوق الستيكر اللي عجبك
+  // بناء الرسالة الكاملة
   build: (sections) => {
-    let msg = `*◇❐ ═━━╾⚡⚡⚡ ╼━━═ ❐◇*\n`
+    let msg = `${theme.divider}\n`
+
     for (const section of sections) {
-      if (section.type === 'title') {
-        msg += `*┃* ⚡ ╎ ❄️ *${section.text}*\n`
-      } else if (section.type === 'subtitle') {
-        msg += `*┃* ⚡ ╎ ⚔️ *${section.text}*\n`
-      } else if (section.type === 'info') {
-        msg += `*┃* ⚡ ╎ 🔮 *${section.label}:* ${section.value}\n`
-      } else if (section.type === 'line') {
-        msg += `*┃* ⚡ ╎ ${section.text}\n`
-      } else if (section.type === 'divider') {
-        msg += `*┃* ⚡ ╎ ── ❄️ ⚔️ 🩸 🔮 𓂀 𖤐 ☾ ──\n`
-      } else if (section.type === 'spacer') {
-        msg += `*┃* ⚡ ╎\n`
+      switch (section.type) {
+        case 'title':
+          msg += `*┃* ⚡ *${section.text}*\n`
+          break
+        case 'subtitle':
+          msg += `*┃* ⚔️ *${section.text}*\n`
+          break
+        case 'info':
+          msg += `*┃* 🔮 *${section.label}:* ${section.value}\n`
+          break
+        case 'line':
+          msg += `*┃* ✧ ${section.text}\n`
+          break
+        case 'divider':
+          msg += `*┃* ── ❄️ ⚔️ 🔮 ☾ ──\n`
+          break
+        case 'spacer':
+          msg += `*┃*\n`
+          break
+        default:
+          break
       }
     }
-    msg += `*◇❐ ═━━╾⚡⚡⚡╼━━═ ❐◇*`
+
+    msg += `${theme.endDivider}`
     return msg
   },
 
-  // رسالة الملف الشخصي - من كل شي + برق
+  // رسالة الملف الشخصي
   profile: (data) => {
-    let msg = `*◇❐ ═━━╾⚡⚡⚡ ╼━━═ ❐◇*\n`
-    msg += `*┃* ⚡ ╎ ❀⃘⃛͜ ۪۪۪݃𓉘᳟ี ⃞̸͢𑁃 ̚𓉝᳟ี ͟͟͞͞⌒᳝︵໋۪۪۪۪۪᳝֔࣪┄꯭๋━┄꫶︦⡳۪۪۪۪۟︵໋۪۪۪۪۪᳝֔࣪⌒᳝ᦷ࣭࣪❄️ּ۪᪲۫ᮬ ࣭࣪ᦡ ۪ׄ⌒᳝\n`
-    msg += `*┃* ⚡ ╎ ⃝⃘︢︣֟፝ · ͟͟͞͞Evernight· ͟͟͞͞➳ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 · ⚡\n`
-    msg += `*┃* ⚡ ╎ ── ❄️ ⚔️ 🩸 🔮 𓂀 𖤐 ☾ 👑 𓋹 ──\n`
+    let msg = `${theme.divider}\n`
+    msg += `*┃* ⚡ *𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓* ╎ _Evernight_\n`
+    msg += `*┃* ── ❄️ ⚔️ 🔮 👑 ──\n`
+
     for (const item of data) {
-      if (item.type === 'header') {
-        msg += `*┃* ⚡ ╎ ├ׁ̟̇˚₊· ͟͟͞͞➳❥ ⚡ ${item.text}\n`
-      } else if (item.type === 'info') {
-        msg += `*┃* ⚡ ╎ ├ׁ̟̇˚₊· ͟͟͞͞➳❥ ⚡ ${item.label}: ${item.value}\n`
-      } else if (item.type === 'line') {
-        msg += `*┃* ⚡ ╎ ├ׁ̟̇˚₊· ͟͟͞͞➳❥ ⚡ ${item.text}\n`
+      switch (item.type) {
+        case 'header':
+          msg += `*┃* 👑 *${item.text}*\n`
+          break
+        case 'info':
+          msg += `*┃* 🔮 *${item.label}:* ${item.value}\n`
+          break
+        case 'line':
+          msg += `*┃* ✧ ${item.text}\n`
+          break
+        default:
+          break
       }
     }
-    msg += `*◇❐ ═━━╾⚡⚡⚡╼━━═ ❐◇*`
+
+    msg += `${theme.endDivider}`
     return msg
   }
 }
