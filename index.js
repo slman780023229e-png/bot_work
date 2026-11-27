@@ -84,7 +84,7 @@ const PORT = process.env.PORT || process.env.SERVER_PORT || 3000
 
 const sessionDir = path.join(__dirname, 'ملف_الاتصال')
 const dataDir = path.join(__dirname, 'data')
-const MAX_SESSION_FILES = 200
+const MAX_SESSION_FILES = 500
 
 global.creds = 'creds.json'
 global.authFile = 'ArthurSession'
@@ -291,7 +291,7 @@ global.db
   })
 
 // ============================================================
-// SESSION FILE TYPE DETECTION & TRIMMING (MAX 200 FILES)
+// SESSION FILE TYPE DETECTION & TRIMMING (MAX 500 FILES)
 // ============================================================
 
 function getSessionFileType(fileName) {
@@ -421,7 +421,7 @@ try {
     console.log(chalk.gray('ℹ️ سيتم استخدام مجلد ملف_الاتصال كمسار موحد لملفات الجلسة المحلية.'))
   }
 
-  // تقليص ملفات الجلسة عند البدء إذا تجاوزت 200 ملف
+  // تقليص ملفات الجلسة عند البدء إذا تجاوزت 500 ملف
   trimSessionFilesToLimit(sessionDir, MAX_SESSION_FILES).catch(() => {})
 } catch (e) {
   console.log(chalk.red('⚠️ خطأ في معالجة مسار الجلسة: ' + e.message))
