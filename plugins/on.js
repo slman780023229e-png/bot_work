@@ -156,17 +156,17 @@ handler.before = async (m, { conn }) => {
         const mentions = userId ? [userId] : []
 
         // ==================================================
-        // ⚡ دخول عضو جديد
+        // ✨ دخول عضو جديد
         // ==================================================
 
         if (m.messageStubType === 27) {
             const txtwelcome =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* ⚡ ╎ *تـرحـيـب*
-*┃* ⚡ ╎ *العضو:* ${mention}
-*┃* ⚡ ╎ *المجموعة:* ${groupMetadata.subject}
-*┃* ⚡ ╎ *الأعضاء:* ${groupSize}
-*┃* ⚡ ╎ *الوصف:* ${groupDescription.substring(0, 100)}
+*┃* ✨ ╎ *تـرحـيـب*
+*┃* ✨ ╎ *العضو:* ${mention}
+*┃* ✨ ╎ *المجموعة:* ${groupMetadata.subject}
+*┃* ✨ ╎ *الأعضاء:* ${groupSize}
+*┃* ✨ ╎ *الوصف:* ${groupDescription.substring(0, 100)}
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
 
             try {
@@ -201,17 +201,17 @@ handler.before = async (m, { conn }) => {
         }
 
         // ==================================================
-        // ⚡ خروج عضو
+        // 🍂 خروج عضو
         // ==================================================
 
         if (m.messageStubType === 28 || m.messageStubType === 32) {
             const txtBye =
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* ⚡ ╎ *وداعـاً*
-*┃* ⚡ ╎ *العضو:* ${mention}
-*┃* ⚡ ╎ *المجموعة:* ${groupMetadata.subject}
-*┃* ⚡ ╎ *الأعضاء:* ${groupSize}
-*┃* ⚡ ╎ *نتمنى رؤيتك مرة أخرى*
+*┃* 🍂 ╎ *وداعـاً*
+*┃* 🍂 ╎ *العضو:* ${mention}
+*┃* 🍂 ╎ *المجموعة:* ${groupMetadata.subject}
+*┃* 🍂 ╎ *الأعضاء:* ${groupSize}
+*┃* 🍂 ╎ *نتمنى رؤيتك مرة أخرى*
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
 
             try {
