@@ -9,7 +9,6 @@ import ffmpegPath from 'ffmpeg-static'
 const execAsync = promisify(execFile)
 const FFMPEG = ffmpegPath
 
-// ===== تحويل العامي الى فصحى =====
 function toFusha(text){
   let t = text
   t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
@@ -50,34 +49,64 @@ function splitText(text, max = 150){
   return chunks.filter(Boolean)
 }
 
-// ===== فلاتر تغيير الصوت - للحيوانات والشخصيات =====
+// ===== كل الاصوات هنا =====
 function getChangeFilter(name){
   name = name.toLowerCase().trim()
-  // سنجاب - صوت رفيع جداً وسريع
-  if(name.includes('سنجاب') || name.includes('فار') || name.includes('chipmunk')) return 'asetrate=48000*2.2,aresample=48000,atempo=0.9,loudnorm'
-  // خروف - صوت ثقيل ومبحوح وممطوط
-  if(name.includes('خروف') || name.includes('غنم') || name.includes('معزة')) return 'asetrate=48000*0.6,aresample=48000,atempo=0.85,vibrato=f=5:d=0.4,loudnorm'
-  // قط - صوت ناعم ورفيع
-  if(name.includes('قط') || name.includes('قطة') || name.includes('بسة')) return 'asetrate=48000*1.5,aresample=48000,atempo=0.95,vibrato=f=8:d=0.2,loudnorm'
-  // كلب - صوت خشن وثقيل
-  if(name.includes('كلب')) return 'asetrate=48000*0.7,aresample=48000,atempo=0.9,acompressor, loudnorm'
-  // طفل
+
+  // ===== ايزن - ابشع صوت =====
+  if(name.includes('ايزن') || name.includes('aizen')) 
+    return 'asetrate=48000*0.45,aresample=48000,atempo=0.8,vibrato=f=2:d=0.8,aecho=0.9:0.8:200|300:0.6|0.5,acompressor,alimiter,asetrate=48000*0.8,aresample=48000,loudnorm'
+
+  // ===== انمي =====
+  if(name.includes('غوكو') || name.includes('goku')) return 'asetrate=48000*1.3,aresample=48000,atempo=0.9,acompressor,loudnorm'
+  if(name.includes('ناروتو') || name.includes('naruto')) return 'asetrate=48000*1.4,aresample=48000,atempo=1.0,loudnorm'
+  if(name.includes('لوفي') || name.includes('luffy')) return 'asetrate=48000*1.35,aresample=48000,atempo=1.0,vibrato=f=6:d=0.3,loudnorm'
+  if(name.includes('مادارا') || name.includes('madara')) return 'asetrate=48000*0.6,aresample=48000,atempo=0.85,aecho=0.8:0.7:100:0.4,loudnorm'
+  if(name.includes('ساسكي') || name.includes('sasuke')) return 'asetrate=48000*0.85,aresample=48000,atempo=0.9,loudnorm'
+  if(name.includes('ايتاشي') || name.includes('itachi')) return 'asetrate=48000*0.7,aresample=48000,atempo=0.85,aecho=0.8:0.7:80:0.3,loudnorm'
+  if(name.includes('زورو')) return 'asetrate=48000*0.8,aresample=48000,atempo=0.9,acompressor,loudnorm'
+  if(name.includes('كاكاشي')) return 'asetrate=48000*0.9,aresample=48000,atempo=0.9,loudnorm'
+  if(name.includes('غوجو') || name.includes('gojo')) return 'asetrate=48000*1.1,aresample=48000,atempo=0.9,aecho=0.7:0.6:50:0.2,loudnorm'
+  if(name.includes('سوكونا') || name.includes('sukuna')) return 'asetrate=48000*0.55,aresample=48000,atempo=0.85,aecho=0.9:0.8:150:0.5,acompressor,loudnorm'
+  if(name.includes('فيجيتا')) return 'asetrate=48000*0.75,aresample=48000,atempo=0.9,acompressor,loudnorm'
+
+  // ===== حيوانات =====
+  if(name.includes('سنجاب') || name.includes('فار')) return 'asetrate=48000*2.2,aresample=48000,atempo=0.9,loudnorm'
+  if(name.includes('خروف') || name.includes('غنم') || name.includes('معزة') || name.includes('ماعز')) return 'asetrate=48000*0.6,aresample=48000,atempo=0.85,vibrato=f=5:d=0.4,loudnorm'
+  if(name.includes('قط') || name.includes('بسة')) return 'asetrate=48000*1.5,aresample=48000,atempo=0.95,vibrato=f=8:d=0.2,loudnorm'
+  if(name.includes('كلب')) return 'asetrate=48000*0.7,aresample=48000,atempo=0.9,acompressor,loudnorm'
+  if(name.includes('اسد') || name.includes('نمر')) return 'asetrate=48000*0.5,aresample=48000,atempo=0.8,acompressor,aecho=0.8:0.7:100:0.4,loudnorm'
+  if(name.includes('دجاج') || name.includes('دجاجة')) return 'asetrate=48000*1.9,aresample=48000,atempo=1.1,vibrato=f=10:d=0.5,loudnorm'
+  if(name.includes('بطة') || name.includes('بط')) return 'asetrate=48000*1.2,aresample=48000,atempo=0.9,vibrato=f=12:d=0.6,loudnorm'
+  if(name.includes('بقرة') || name.includes('بقر')) return 'asetrate=48000*0.55,aresample=48000,atempo=0.8,vibrato=f=3:d=0.5,loudnorm'
+  if(name.includes('ضفدع')) return 'asetrate=48000*0.65,aresample=48000,atempo=0.85,vibrato=f=4:d=0.6,loudnorm'
+  if(name.includes('قرد')) return 'asetrate=48000*1.7,aresample=48000,atempo=1.1,vibrato=f=9:d=0.4,loudnorm'
+  if(name.includes('حمار')) return 'asetrate=48000*0.5,aresample=48000,atempo=0.8,vibrato=f=2:d=0.7,loudnorm'
+
+  // ===== بشر وشخصيات =====
   if(name.includes('طفل') || name.includes('بيبي') || name.includes('صغير')) return 'asetrate=48000*1.55,aresample=48000,atempo=0.95,loudnorm'
-  // بنت
-  if(name.includes('بنت') || name.includes('مراه') || name.includes('امراه') || name.includes('نساء') || name.includes('انثى')) return 'asetrate=48000*1.28,aresample=48000,atempo=0.95,loudnorm'
-  // عجوز
+  if(name.includes('بنت') || name.includes('انثى') || name.includes('مراه') || name.includes('نساء')) return 'asetrate=48000*1.28,aresample=48000,atempo=0.95,loudnorm'
   if(name.includes('عجوز') || name.includes('شايب') || name.includes('شيخ') || name.includes('كبير')) return 'asetrate=48000*0.72,aresample=48000,atempo=0.9,loudnorm'
-  // وحش / شيطان
-  if(name.includes('وحش') || name.includes('شيطان') || name.includes('مرعب') || name.includes('زومبي')) return 'asetrate=48000*0.5,aresample=48000,atempo=0.9,aecho=0.8:0.7:100:0.5,loudnorm'
-  // روبوت
-  if(name.includes('روبوت') || name.includes('الي') || name.includes('كمبيوتر')) return 'aecho=0.8:0.7:40|60:0.3|0.25,atempo=0.95,loudnorm'
-  // بطيء
-  if(name.includes('بطيء') || name.includes('بطيئ')) return 'atempo=0.6,loudnorm'
-  // سريع
-  if(name.includes('سريع')) return 'atempo=1.5,loudnorm'
-  // رجال
+  if(name.includes('وحش') || name.includes('مرعب')) return 'asetrate=48000*0.5,aresample=48000,atempo=0.9,aecho=0.8:0.7:100:0.5,loudnorm'
+  if(name.includes('شيطان')) return 'asetrate=48000*0.45,aresample=48000,atempo=0.85,aecho=0.9:0.8:200:0.6,vibrato=f=3:d=0.5,loudnorm'
+  if(name.includes('روبوت') || name.includes('الي')) return 'aecho=0.8:0.7:40|60:0.3|0.25,atempo=0.95,loudnorm'
+  if(name.includes('زومبي') || name.includes('ميت')) return 'asetrate=48000*0.6,aresample=48000,atempo=0.8,aecho=0.8:0.7:150:0.4,vibrato=f=2:d=0.6,loudnorm'
+  if(name.includes('سكران') || name.includes('مخمور')) return 'atempo=0.7,vibrato=f=4:d=0.5,loudnorm'
+  if(name.includes('نايم') || name.includes('نعسان')) return 'atempo=0.7,asetrate=48000*0.8,aresample=48000,loudnorm'
   if(name.includes('رجال') || name.includes('رجل') || name.includes('ولد') || name.includes('شاب')) return 'asetrate=48000*0.85,aresample=48000,atempo=0.95,loudnorm'
-  // افتراضي - سنجاب اذا كتب شي غريب
+  if(name.includes('مذيع') || name.includes('اخبار')) return 'acompressor,atempo=0.9,loudnorm'
+  if(name.includes('مغني')) return 'aecho=0.7:0.6:80:0.3,atempo=0.95,loudnorm'
+
+  // ===== تأثيرات مضحكة =====
+  if(name.includes('بطيء') || name.includes('بطيئ')) return 'atempo=0.6,loudnorm'
+  if(name.includes('سريع')) return 'atempo=1.5,loudnorm'
+  if(name.includes('هيليوم') || name.includes('بالون')) return 'asetrate=48000*2.5,aresample=48000,atempo=0.9,loudnorm'
+  if(name.includes('ماء') || name.includes('تحت')) return 'lowpass=f=800,atempo=0.85,loudnorm'
+  if(name.includes('كهف') || name.includes('صدى')) return 'aecho=0.9:0.8:200|300|400:0.4|0.3|0.2,loudnorm'
+  if(name.includes('راديو') || name.includes('قديم')) return 'highpass=f=500,lowpass=f=3000,atempo=0.95,loudnorm'
+  if(name.includes('هاتف') || name.includes('جوال')) return 'highpass=f=800,lowpass=f=2500,atempo=0.95,loudnorm'
+  if(name.includes('فضاء')) return 'aecho=0.9:0.8:500:0.5,atempo=0.9,loudnorm'
+
   return 'asetrate=48000*1.8,aresample=48000,atempo=0.95,loudnorm'
 }
 
@@ -102,22 +131,16 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     let input = (text || '').trim()
     let quoted = m.quoted
 
-    // ===== ميزة 1: تغيير صوت فويس - رد على فويس وكتبت صوت سنجاب / خروف =====
+    // ===== تغيير صوت فويس =====
     if(quoted){
       let qMime = quoted.mimetype || quoted.msg?.mimetype || ''
       let isAudio = qMime.includes('audio') || quoted.msg?.audioMessage || quoted.msg?.voiceMessage || quoted.ptt || quoted.audioMessage
-      // اذا رديت على صوت وكتبت "صوت سنجاب" او "صوت خروف" او اي اسم
-      if(isAudio && input && (input.startsWith('صوت') || input.startsWith('حول') || input.length < 30)){
-        // شيل كلمة صوت من البداية، خذ الاسم بس
+      if(isAudio && input){
         let effectName = input.replace(/^(صوت|حول|غير)\s*/i, '').trim() || 'سنجاب'
-        // لو كتب بس "صوت" بدون اسم، خليه سنجاب
-        if(!effectName) effectName = 'سنجاب'
-
         let audioBuffer = null
         try { audioBuffer = await conn.downloadMediaMessage(quoted) } catch {}
         if(!audioBuffer?.length && m.quoted?.download){ try{ audioBuffer = await m.quoted.download() }catch{} }
         if(!audioBuffer?.length) return m.reply('لم أستطع تحميل الصوت')
-
         fs.writeFileSync(inPath, audioBuffer)
         let filter = getChangeFilter(effectName)
         await execAsync(FFMPEG, ['-y','-i', inPath, '-af', filter, '-c:a','libopus','-b:a','128k','-ar','48000','-ac','1', oggPath])
@@ -126,8 +149,6 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         await react('✅')
         return
       }
-
-      // ===== فيديو الى صوت =====
       let isVideo = qMime.includes('video') || quoted.msg?.videoMessage
       if(isVideo){
         let videoBuffer = null
@@ -144,26 +165,21 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     }
 
-    // ===== ميزة 2: كتابة الى صوت فصحى =====
+    // ===== كتابة الى صوت فصحى =====
     let voiceNum = 1
     let cmdMatch = (command || '').match(/صوت(\d)/)
     if(cmdMatch) voiceNum = parseInt(cmdMatch[1])
     if(voiceNum < 1 || voiceNum > 5) voiceNum = 1
-
     if(quoted && !input){
       let qText = quoted.text || quoted.body || quoted.msg?.conversation || quoted.msg?.extendedTextMessage?.text || ''
       if(qText) input = qText.trim()
     }
-
-    if(!input) return m.reply(`*طريقة الاستخدام:*\n\n1- كتابة لصوت فصيح:\n.صوت1 مرحباً بكم\n\n2- تغيير صوت فويس:\nرد على فويس واكتب:\nصوت سنجاب\nصوت خروف\nصوت قط\nصوت وحش\n\n3- فيديو لصوت:\nرد على فيديو واكتب .صوت`)
-
+    if(!input) return m.reply(`*الاصوات المتوفرة:*\n\n*انمي:*\nصوت ايزن - ابشع صوت 😈\nصوت غوكو - صوت ناروتو - صوت لوفي\nصوت مادارا - صوت ساسكي - صوت ايتاشي - صوت غوجو - صوت سوكونا\n\n*حيوانات:*\nصوت سنجاب - صوت خروف - صوت قط - صوت كلب - صوت اسد - صوت دجاجة - صوت بطة - صوت بقرة - صوت ضفدع - صوت قرد\n\n*بشر:*\nصوت طفل - صوت بنت - صوت عجوز - صوت وحش - صوت شيطان - صوت روبوت - صوت زومبي - صوت سكران\n\n*تأثيرات:*\nصوت بطيء - صوت سريع - صوت هيليوم - صوت تحت الماء - صوت كهف - صوت راديو\n\n*الطريقة:*\nرد على اي فويس واكتب: صوت ايزن`)
     if(input.length > 3000) input = input.slice(0, 3000)
     let isArabic = /[\u0600-\u06FF]/.test(input)
     let fushaText = isArabic ? toFusha(input) : input
     let lang = isArabic ? 'ar' : 'en'
     let chunks = splitText(fushaText, 150)
-
-    // بدون اي رسالة "سأحول" - يحول مباشر
     let files = []
     for(let i = 0; i < chunks.length; i++){
       let mp3 = path.join(tmpDir, `part${i}.mp3`)
@@ -176,7 +192,6 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
       await new Promise(r => setTimeout(r, 250))
     }
     if(!files.length) throw new Error('فشل')
-
     let listPath = path.join(tmpDir, 'list.txt')
     let listContent = ''
     for(let f of files){
@@ -194,7 +209,6 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     const oggBuffer = fs.readFileSync(oggPath)
     await conn.sendMessage(m.chat, { audio: oggBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true }, { quoted: m })
     await react('✅')
-
   }catch(e){
     console.error(e)
     await react('❌')
