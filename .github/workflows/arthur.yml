@@ -50,22 +50,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: npm
 
       # ==========================================
-      # 4. تثبيت المكتبات
+      # 4. تثبيت المكتبات - تم اصلاحه
       # ==========================================
       - name: تثبيت مكتبات المشروع
         shell: bash
         run: |
           set -e
-
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
           echo "✅ تم تثبيت المكتبات بنجاح"
 
       # ==========================================
