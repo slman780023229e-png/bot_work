@@ -1,417 +1,248 @@
-// plugins/facebook.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Facebook Downloader 📘
+// plugins/فيس.js
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - Facebook Videos - كروسيل + سكته + سريع ✅
 
 import axios from 'axios'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import { unlinkSync, existsSync, statSync, writeFileSync, readFileSync, copyFileSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
+import ffmpegStatic from 'ffmpeg-static'
+import {
+  proto,
+  generateWAMessageFromContent,
+  generateWAMessageContent,
+} from "@whiskeysockets/baileys"
+import { theme } from '../core/theme.js'
 
-function parseString(string) {
-    try {
-        return JSON.parse(`{"text": "${string}"}`).text
-    } catch {
-        return string
-    }
+const execAsync = promisify(exec)
+
+/* ═══════════════════════════════════════
+   📘 FACEBOOK SEARCH & DOWNLOAD API
+═══════════════════════════════════════ */
+const API_KEY = "ak_live_SRXV4CfsgQtwnkjI0OhicCphe6MVOoan9sySwz-PyrM"
+const SEARCH_API = "https://apidirect.io/v1/facebook/videos"
+const DOWNLOAD_API = "https://fdown.isuru.eu.org/download"
+
+function cleanName(name) {
+    return String(name || "Facebook").replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, " ").trim().slice(0, 80)
 }
 
-function match(data, ...patterns) {
-    for (const pattern of patterns) {
-        const result = data.match(pattern)
-        if (result) return result
-    }
-    return null
-}
-
-async function fesnuk(postUrl, cookie = '', userAgent = '') {
-
-    if (!postUrl || !postUrl.trim()) {
-        throw new Error('يرجى إرسال رابط فيسبوك.')
-    }
-
-    if (!/(facebook\.com|fb\.watch)/i.test(postUrl)) {
-        throw new Error('الرابط ليس رابط فيسبوك صحيح.')
-    }
-
-    const headers = {
-        'sec-fetch-user': '?1',
-        'sec-ch-ua-mobile': '?0',
-        'sec-fetch-site': 'none',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'cache-control': 'max-age=0',
-        'authority': 'www.facebook.com',
-        'upgrade-insecure-requests': '1',
-        'accept-language': 'en-GB,en;q=0.9',
-        'sec-ch-ua': '"Google Chrome";v="89", "Chromium";v="89", ";Not A Brand";v="99"',
-        'user-agent':
-            userAgent ||
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/89.0.4389.114 Safari/537.36',
-        'accept':
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-        'cookie': cookie || ''
-    }
-
-    try {
-
-        const response = await axios.get(postUrl, {
-            headers,
-            timeout: 60000,
-            maxRedirects: 10,
-            validateStatus: status => status >= 200 && status < 400
-        })
-
-        let data = response.data
-
-        if (!data || typeof data !== 'string') {
-            throw new Error('فيسبوك لم يرجع بيانات.')
-        }
-
-        // استخراج SD
-        const sdMatch = match(
-            data,
-            /"browser_native_sd_url":"(.*?)"/,
-            /"browser_native_sd_url"\s*:\s*"(.*?)"/,
-            /sd_src\s*:\s*"([^"]*)"/
-        )
-
-        // استخراج HD
-        const hdMatch = match(
-            data,
-            /"browser_native_hd_url":"(.*?)"/,
-            /"browser_native_hd_url"\s*:\s*"(.*?)"/,
-            /hd_src\s*:\s*"([^"]*)"/
-        )
-
-        // استخراج العنوان
-        const titleMatch = match(
-            data,
-            /<meta\s+name=["']description["']\s+content=["'](.*?)["']/i,
-            /<meta\s+content=["'](.*?)["']\s+name=["']description["']/i
-        )
-
-        let sdUrl = sdMatch?.[1] || ''
-        let hdUrl = hdMatch?.[1] || ''
-
-        let title = titleMatch?.[1] || 'Facebook Video'
-
-        // فك ترميز الروابط
+// ===== بحث واسع 20 =====
+async function searchFacebook(query, needed = 20) {
+    let allVideos = []
+    for (let page = 1; page <= 3; page++) {
         try {
-            sdUrl = parseString(sdUrl)
-            hdUrl = parseString(hdUrl)
-        } catch {}
-
-        title = parseString(title)
-
-        if (!sdUrl && !hdUrl) {
-            throw new Error(
-                'لم يتم العثور على رابط الفيديو. قد يكون المنشور خاصًا أو غير متاح.'
-            )
-        }
-
-        return {
-            url: postUrl,
-            title,
-            quality: {
-                sd: sdUrl,
-                hd: hdUrl
-            }
-        }
-
-    } catch (error) {
-
-        console.error(
-            '[𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 Facebook]',
-            error?.message || error
-        )
-
-        if (error?.message?.includes('لم يتم العثور')) {
-            throw error
-        }
-
-        throw new Error(
-            'تعذر جلب فيديو فيسبوك. تأكد أن المنشور عام.'
-        )
-    }
-}
-
-async function sendFacebookVideo(m, conn, url, title) {
-
-    // نحاول HD أولاً
-    try {
-
-        if (url) {
-
-            const test = await axios.head(url, {
+            const response = await axios.get(SEARCH_API, {
+                params: { query, page },
                 timeout: 30000,
-                maxRedirects: 5,
-                validateStatus: () => true
+                headers: { "X-API-Key": API_KEY, Accept: "application/json", "User-Agent": "YUNO-BOT/1.0" }
             })
-
-            if (test.status >= 200 && test.status < 400) {
-
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        video: { url },
-                        mimetype: 'video/mp4',
-                        caption:
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📘 〕━━━╮
-┃
-┃ ✅ تم تحميل فيديو فيسبوك
-┃
-┃ 🎬 ${title.substring(0, 70)}
-┃
-┃ 📥 الجودة: HD
-┃
-╰━━━━━━━━━━━━━━━━╯`
-                    },
-                    { quoted: m }
-                )
-
-                return true
-            }
-        }
-
-    } catch (e) {
-        console.log(
-            '[𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓] HD failed:',
-            e.message
-        )
+            const data = response.data
+            const videos = data?.videos || data?.results || data?.data || []
+            if (Array.isArray(videos) && videos.length > 0) allVideos.push(...videos)
+            else break
+            if (allVideos.length >= needed) break
+        } catch { break }
     }
-
-    return false
+    return allVideos.slice(0, needed)
 }
 
-let handler = async (
-    m,
-    {
-        args,
-        conn,
-        usedPrefix,
-        command
+function getFacebookURL(video) {
+    return video.url || video.video_url || video.videoUrl || video.link || video.permalink || video.permalink_url || null
+}
+function getTitle(video) {
+    return video.title || video.name || video.description || video.caption || "فيديو Facebook"
+}
+function getAuthor(video) {
+    return video.author?.name || video.author?.username || video.author || video.page_name || video.publisher || "Facebook"
+}
+
+// ===== بحث ذكي - ما يرجع فاضي ابدا =====
+async function searchSmart(query, needed = 20) {
+    let videos = await searchFacebook(query, needed)
+    // نظف اللي ما عنده رابط
+    videos = videos.filter(v => getFacebookURL(v))
+    if (videos.length >= 5) return { videos, similar: false, usedQuery: query }
+
+    let words = query.split(' ').filter(w => w.length > 2)
+    let tries = []
+    if (words.length > 1) { tries.push(words[0], words.slice(0, 2).join(' ')) }
+    tries.push('naruto', 'anime', 'trending', 'viral video', 'funny')
+
+    for (let q of tries) {
+        if (videos.length >= needed) break
+        if (q.toLowerCase() === query.toLowerCase()) continue
+        let more = await searchFacebook(q, needed - videos.length)
+        more = more.filter(v => getFacebookURL(v))
+        for (let v of more) {
+            let url = getFacebookURL(v)
+            if (!videos.find(x => getFacebookURL(x) === url)) videos.push(v)
+        }
+        if (videos.length >= 5) return { videos: videos.slice(0, needed), similar: true, usedQuery: q }
     }
-) => {
+    return { videos: videos.slice(0, needed), similar: videos.length < 5, usedQuery: query }
+}
 
-    const react = async emoji => {
-        try {
-            await conn.sendMessage(
-                m.chat,
-                {
-                    react: {
-                        text: emoji,
-                        key: m.key
-                    }
-                }
-            )
-        } catch {}
-    }
-
-    const url = args?.[0]
-
-    // بدون رابط
-    if (!url) {
-
-        await react('❌')
-
-        return conn.reply(
-            m.chat,
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📘 〕━━━╮
-┃
-┃ 📥 تحميل فيسبوك
-┃
-┃ استخدم الأمر:
-┃
-┃ ${usedPrefix}${command} رابط_الفيديو
-┃
-┃ مثال:
-┃ ${usedPrefix}${command} https://facebook.com/...
-┃
-╰━━━━━━━━━━━━━━━━╯`,
-            m
-        )
-    }
-
-    // فحص الرابط
-    if (!/(facebook\.com|fb\.watch)/i.test(url)) {
-
-        await react('❌')
-
-        return conn.reply(
-            m.chat,
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮
-┃
-┃ الرابط غير صحيح.
-┃
-┃ أرسل رابط فيديو من Facebook.
-┃
-╰━━━━━━━━━━━━━━━━╯`,
-            m
-        )
-    }
-
-    await react('📥')
-
-    let statusMsg = null
-
+// ===== جيب اخف جودة - عشان الكروسيل يكون سريع =====
+async function getLightQuality(url) {
     try {
-
-        statusMsg = await conn.reply(
-            m.chat,
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📘 〕━━━╮
-┃
-┃ ⏳ جاري جلب فيديو Facebook...
-┃
-┃ 📡 جاري استخراج رابط التحميل
-┃
-╰━━━━━━━━━━━━━━━━╯`,
-            m
-        )
-
-        // جلب الروابط
-        const result = await fesnuk(url)
-
-        const title =
-            result.title ||
-            'Facebook Video'
-
-        const hd = result.quality?.hd
-        const sd = result.quality?.sd
-
-        let sent = false
-
-        // =========================
-        // HD
-        // =========================
-
-        if (hd) {
-
-            sent = await sendFacebookVideo(
-                m,
-                conn,
-                hd,
-                title
-            )
-        }
-
-        // =========================
-        // SD
-        // =========================
-
-        if (!sent && sd) {
-
-            try {
-
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        video: {
-                            url: sd
-                        },
-                        mimetype: 'video/mp4',
-                        caption:
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📘 〕━━━╮
-┃
-┃ ✅ تم تحميل فيديو فيسبوك
-┃
-┃ 🎬 ${title.substring(0, 70)}
-┃
-┃ 📥 الجودة: SD
-┃
-╰━━━━━━━━━━━━━━━━╯`
-                    },
-                    { quoted: m }
-                )
-
-                sent = true
-
-            } catch (e) {
-
-                console.log(
-                    '[𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓] SD failed:',
-                    e.message
-                )
+        const response = await axios.post(DOWNLOAD_API, { url }, {
+            timeout: 60000,
+            headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "YUNO-BOT/1.0" }
+        })
+        const data = response.data
+        if (data?.status === "error") return null
+        let qualities = []
+        const links = data?.links
+        if (links && typeof links === "object") {
+            for (const [key, val] of Object.entries(links)) {
+                if (val && typeof val === "string") {
+                    let k = String(key).toLowerCase()
+                    let priority = 10
+                    if (k.includes("low") || k.includes("360") || k.includes("sd") || k.includes("normal") || k.includes("240") || k.includes("144")) priority = 1
+                    else if (k.includes("hd") || k.includes("720") || k.includes("1080")) priority = 5
+                    qualities.push({ name: key, url: val, priority })
+                }
             }
         }
-
-        // حذف رسالة الانتظار
-        if (statusMsg?.key) {
-
-            try {
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        delete: statusMsg.key
-                    }
-                )
-            } catch {}
-        }
-
-        if (!sent) {
-
-            await react('❌')
-
-            return conn.reply(
-                m.chat,
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮
-┃
-┃ تعذر إرسال الفيديو.
-┃
-┃ ✦ جرب رابط Facebook آخر.
-┃ ✦ تأكد أن الفيديو عام.
-┃
-╰━━━━━━━━━━━━━━━━╯`,
-                m
-            )
-        }
-
-        await react('✅')
-
-    } catch (error) {
-
-        console.error(
-            '[𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 Facebook ERROR]',
-            error
-        )
-
-        if (statusMsg?.key) {
-
-            try {
-                await conn.sendMessage(
-                    m.chat,
-                    {
-                        delete: statusMsg.key
-                    }
-                )
-            } catch {}
-        }
-
-        await react('❌')
-
-        return conn.reply(
-            m.chat,
-`╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮
-┃
-┃ فشل تحميل Facebook
-┃
-┃ ✦ تأكد أن الرابط صحيح.
-┃ ✦ تأكد أن الفيديو عام.
-┃ ✦ جرب رابط Reels أو فيديو آخر.
-┃
-┃ ⚠️ ${error?.message || 'حدث خطأ غير معروف'}
-┃
-╰━━━━━━━━━━━━━━━━╯`,
-            m
-        )
-    }
+        const mainUrl = data?.download_url || data?.downloadUrl || data?.url || data?.video_url
+        if (mainUrl && !qualities.some(q => q.url === mainUrl)) qualities.push({ name: "جودة خفيفة", url: mainUrl, priority: 2 })
+        qualities.sort((a, b) => a.priority - b.priority)
+        return qualities.length ? qualities[0] : null
+    } catch { return null }
 }
 
-handler.help = [
-    'فيس <رابط>',
-    'فيسبوك <رابط>'
-]
+// ===== تحويل سكته وسريع =====
+async function convertSilent(inputPath, outputPath) {
+   const ffmpegPath = ffmpegStatic
+   if (!ffmpegPath || !existsSync(ffmpegPath)) return false
+   try {
+      await execAsync(`"${ffmpegPath}" -y -v error -i "${inputPath}" -c copy -movflags +faststart "${outputPath}"`, { timeout: 30000 })
+      if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
+   } catch { try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
+   try {
+      await execAsync(`"${ffmpegPath}" -y -v error -i "${inputPath}" -c:v libx264 -preset ultrafast -crf 30 -c:a aac -b:a 96k -movflags +faststart -vf "scale='min(720,iw)':-2" "${outputPath}"`, { timeout: 60000 })
+      if (existsSync(outputPath) && statSync(outputPath).size > 10000) return true
+   } catch { try { if (existsSync(outputPath)) unlinkSync(outputPath) } catch {} }
+   return false
+}
 
-handler.tags = [
-    'downloader'
-]
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+  const react = async (emoji) => {
+    try { await conn.sendMessage(m.chat, { react: { text: emoji, key: m.key } }) } catch {}
+  }
 
-handler.command =
-    /^(فيس|فيسبوك|fb|face|facebook)$/i
+  if (!text) {
+    return m.reply(theme.build([
+      { type: 'title', text: '🎬 Facebook Videos - ARTHUR BOT' },
+      { type: 'divider' },
+      { type: 'info', label: '🎬 بحث فيديوهات', value: `${usedPrefix + command} <كلمة>` },
+      { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو` }
+    ]))
+  }
+
+  // تحميل من رابط مباشر - سكته
+  if (text.includes('facebook.com') || text.includes('fb.watch') || text.includes('fb.gg')) {
+    await react('⏳')
+    await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
+    try {
+      let q = await getLightQuality(text)
+      if (!q) throw new Error('ما لقيت جودة')
+      const rawPath = join(tmpdir(), `fb_raw_${Date.now()}.mp4`)
+      const finalPath = join(tmpdir(), `fb_${Date.now()}.mp4`)
+      const res = await axios.get(q.url, { responseType: 'arraybuffer', timeout: 60000, headers: { 'User-Agent': 'Mozilla/5.0' } })
+      writeFileSync(rawPath, Buffer.from(res.data))
+      let ok = await convertSilent(rawPath, finalPath)
+      if (!ok) copyFileSync(rawPath, finalPath)
+      try { unlinkSync(rawPath) } catch {}
+      await conn.sendMessage(m.chat, { video: { url: finalPath }, mimetype: 'video/mp4', caption: `✅ تم التحميل\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }, { quoted: m })
+      await react('✅')
+      try { unlinkSync(finalPath) } catch {}
+    } catch { await react('❌') }
+    return
+  }
+
+  // ===== البداية - مثل البينترف =====
+  await react('🔍')
+  await m.reply('🔍 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 يبحث عن الصور...')
+
+  // من هنا كل شي سكته
+  try {
+    const { videos, similar, usedQuery } = await searchSmart(text, 20)
+    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت فيديوهات') }
+
+    let cards = []
+    for (let i = 0; i < videos.length && cards.length < 10; i++) {
+      let v = videos[i]
+      let fbUrl = getFacebookURL(v)
+      let title = cleanName(getTitle(v))
+      let author = cleanName(getAuthor(v))
+      let rawPath = join(tmpdir(), `fb_raw_${Date.now()}_${i}.mp4`)
+      let finalPath = join(tmpdir(), `fb_final_${Date.now()}_${i}.mp4`)
+      try {
+        // نجيب اخف جودة عشان الكروسيل يكون سريع
+        let q = await getLightQuality(fbUrl)
+        if (!q) continue
+
+        const vidRes = await axios.get(q.url, {
+          responseType: 'arraybuffer',
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          timeout: 40000, maxContentLength: 50 * 1024 * 1024
+        })
+        writeFileSync(rawPath, Buffer.from(vidRes.data))
+        if (statSync(rawPath).size < 5000) continue
+
+        let ok = await convertSilent(rawPath, finalPath)
+        if (!ok) copyFileSync(rawPath, finalPath)
+
+        if (!existsSync(finalPath) || statSync(finalPath).size < 5000) continue
+        if (statSync(finalPath).size > 16 * 1024 * 1024) continue
+
+        let buffer = readFileSync(finalPath)
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8) continue
+        if (buffer.slice(1,4).toString() === 'PNG') continue
+
+        const { videoMessage } = await generateWAMessageContent({ video: buffer }, { upload: conn.waUploadToServer })
+        if (!videoMessage) continue
+
+        cards.push({
+          body: proto.Message.InteractiveMessage.Body.fromObject({ text: `🎬 فيديو ${cards.length + 1} | ${title.slice(0, 50)}\n👤 ${author}` }),
+          header: proto.Message.InteractiveMessage.Header.fromObject({ hasMediaAttachment: true, videoMessage }),
+          nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+            buttons: [
+              { name: "cta_url", buttonParamsJson: JSON.stringify({ display_text: "📘 فتح في Facebook", url: fbUrl }) },
+              { name: "quick_reply", buttonParamsJson: JSON.stringify({ display_text: "📥 تحميل الفيديو", id: `.فيس ${fbUrl}` }) }
+            ]
+          })
+        })
+      } catch { continue }
+      finally {
+        try { if (existsSync(rawPath)) unlinkSync(rawPath) } catch {}
+        try { if (existsSync(finalPath)) unlinkSync(finalPath) } catch {}
+      }
+    }
+
+    if (!cards.length) { await react('❌'); return }
+
+    const finalMessage = generateWAMessageFromContent(m.chat, {
+      viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+        body: proto.Message.InteractiveMessage.Body.create({ text: `🎬 نتائج: ${text}${similar ? `\n🔎 مشابه لـ: ${usedQuery}` : ''}\n📹 ${cards.length} فيديو\n⚡ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓` }),
+        footer: proto.Message.InteractiveMessage.Footer.create({ text: global.watermark || '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡' }),
+        carouselMessage: proto.Message.InteractiveMessage.CarouselMessage.fromObject({ cards })
+      })}}
+    }, { quoted: m })
+
+    await conn.relayMessage(m.chat, finalMessage.message, { messageId: finalMessage.key.id })
+    await react('✅')
+
+  } catch {
+    await react('❌')
+  }
+}
+
+handler.help = ['فيس']
+handler.tags = ['downloader']
+handler.command = /^(فيس|facebook|fb)$/i
 
 export default handler
