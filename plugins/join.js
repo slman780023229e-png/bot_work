@@ -1,6 +1,6 @@
-let linkRegex = /chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i
+let linkRegex = /(?:https?:\/\/)?chat\.whatsapp\.com\/([0-9A-Za-z]{20,24})/i
 
-async function requestJoinByInvite(conn, code) {
+async function sendJoinRequest(conn, code) {
   return conn.query({
     tag: 'iq',
     attrs: {
@@ -29,14 +29,23 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
       )
     }
 
-    let link = (m.quoted ? m.quoted.text : text) || ''
-    let [_, code] = link.match(linkRegex) || []
+    // استخراج الرابط من النص المباشر أو من الرسالة المردود عليها
+    const quotedText =
+      m.quoted?.text ||
+      m.quoted?.caption ||
+      m.quoted?.message?.extendedTextMessage?.text ||
+      m.quoted?.message?.conversation ||
+      ''
+
+    const rawText = `${text || ''} ${quotedText}`.trim()
+    const match = rawText.match(linkRegex)
+    const code = match?.[1]
 
     if (!code) {
       return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* 🔗 ╎ *رابط غير صحيح*
-*┃* 🔗 ╎ *أرسل رابط المجموعة مع الأمر*
+*┃* 🔗 ╎ *أرسل الرابط أو رد على رسالة فيها رابط*
 *┃* 🔗 ╎ *مثال:* ${usedPrefix + command} https://chat.whatsapp.com/xxxx
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
       )
@@ -51,7 +60,7 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
     const needsApproval = Boolean(inviteInfo?.joinApprovalMode)
 
     try {
-      let res = await conn.groupAcceptInvite(code)
+      const res = await conn.groupAcceptInvite(code)
 
       if (needsApproval || !res) {
         return m.reply(
@@ -76,10 +85,10 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
       const errMsg = String(err?.message || err || '')
       const status = err?.data || err?.output?.statusCode
 
-      // محاولة إرسال طلب الانضمام صراحةً إذا كانت المجموعة تتطلب موافقة أو أعطت not-authorized
+      // محاولة إرسال طلب انضمام صريح في حال كانت المجموعة تتطلب موافقة
       if (needsApproval || /not-authorized|approval|pending|request/i.test(errMsg)) {
         try {
-          await requestJoinByInvite(conn, code)
+          await sendJoinRequest(conn, code)
           return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
 *┃* 📩 ╎ *تم تقديم طلب الانضمام*
@@ -91,9 +100,9 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
           console.error('[ARTHUR JOIN REQUEST ERR]', reqErr)
           return m.reply(
 `*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
-*┃* ❌ ╎ *تعذر الانضمام أو إرسال الطلب*
+*┃* ❌ ╎ *تعذر الدخول أو تقديم الطلب*
 *┃* ❌ ╎ *المجموعة:* ${groupName}
-*┃* ❌ ╎ *السبب:* قد يكون البوت مطرودًا سابقًا أو الرابط مرفوض من واتساب (${errMsg})
+*┃* ❌ ╎ *السبب:* البوت مطرود سابقًا أو مقيّد من دخول هذه المجموعة
 *◇❐ ═━━╾⚡╼━━═ ❐◇*`
           )
         }
@@ -127,9 +136,9 @@ let handler = async (m, { conn, text, usedPrefix, command, isOwner, isMods }) =>
   }
 }
 
-handler.help = ['تعالي [رابط الجروب]']
+handler.help = ['تعال', 'ادخل', 'نط']
 handler.tags = ['owner']
-handler.command = /^(join|تعالي)$/i
+handler.command = /^(join|تعال|ادخل|نط)$/i
 
 handler.owner = true
 handler.mods = false
