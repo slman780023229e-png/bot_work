@@ -59,8 +59,38 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         let fullText = args.join(' ') || (text || '')
         let number = extractNumber(fullText)
 
+        // ✅ جديد: اذا ما كتب رقم، خذ رقم اللي ارسل الرسالة (اي شخص)
         if (!number) {
-            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ يرجى كتابة رقم الهاتف مع كود الدولة\n\n📌 مثال: ${usedPrefix + command} 967780023229`)
+            let senderRaw = 
+                m.key?.participantPn ||
+                m.participantPn ||
+                m.sender ||
+                m.key?.participant ||
+                ''
+
+            let senderNum = String(senderRaw).split('@')[0].split(':')[0]
+            senderNum = senderNum.replace(/\D/g, '')
+
+            // اذا طلع LID (رقم وهمي طويل) حاول تجيب الرقم الحقيقي
+            if (senderNum.length > 15 || senderNum.startsWith('0')) {
+                try {
+                    let meta = await conn.groupMetadata(m.chat).catch(() => null)
+                    let p = meta?.participants?.find(x => x.id === m.sender || x.lid === m.sender)
+                    if (p?.pn) senderNum = String(p.pn).split('@')[0].replace(/\D/g, '')
+                } catch {}
+            }
+
+            number = extractNumber(senderNum)
+
+            if (number && isValidPhoneNumber(number)) {
+                await m.reply(`🤖 *تم اخذ رقمك تلقائياً:* ${number}\n⏳ جاري تجهيز البوت الفرعي لك...`)
+            } else {
+                number = ''
+            }
+        }
+
+        if (!number) {
+            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ ما قدرت اقرأ رقمك تلقائياً\n\n📌 مثال: ${usedPrefix + command} 967780023229\n\n💡 او اكتب ${usedPrefix + command} فقط وبياخذ رقمك تلقائياً`)
         }
         if (!isValidPhoneNumber(number)) {
             return m.reply(`❌ *رقم غير صالح:* ${number}`)
