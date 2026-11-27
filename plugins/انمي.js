@@ -1,5 +1,5 @@
 // plugins/انمي.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي - بحث سريع ⚡
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - انمي - بس حلقات 20 دقيقة وفوق + بالترتيب ✅
 
 import axios from 'axios'
 import { exec } from 'child_process'
@@ -21,8 +21,9 @@ const SEARCH_API = "https://apidirect.io/v1/facebook/videos"
 const DOWNLOAD_API = "https://fdown.isuru.eu.org/download"
 
 const cache = new Map()
-const searchCache = new Map() // كاش البحث - عشان ما نبحث مرتين عن نفس الانمي
+const searchCache = new Map()
 const CACHE_TIME = 20 * 60 * 1000
+const MIN_DURATION = 20 * 60 // 20 دقيقة = 1200 ثانية - اقل من كذا ما نجيبه
 
 function cleanName(name) {
     return String(name || "Facebook").replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, " ").trim().slice(0, 80)
@@ -60,6 +61,33 @@ function getDate(video) {
         return date.toISOString().slice(0, 10)
     } catch { return String(d).slice(0, 10) }
 }
+
+// ===== مدة الفيديو - بكل الصيغ اللي يرسلها الفيس =====
+function getDuration(video) {
+    let d = video.duration ?? video.duration_seconds ?? video.durationSeconds ?? video.length ?? video.video_duration ?? video.videoDuration ?? video.play_time ?? video.playtime ?? null
+    // اذا المدة نص مثل "21:30" او "20:05"
+    if (typeof d === 'string') {
+        if (d.includes(':')) {
+            let parts = d.split(':').map(x => parseInt(x) || 0)
+            if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            if (parts.length === 2) return parts[0] * 60 + parts[1]
+            return parseInt(d) || 0
+        }
+        return parseInt(d) || 0
+    }
+    if (typeof d === 'number') return d
+    // اذا المدة داخل object
+    if (d && typeof d === 'object') return d.seconds || d.duration || 0
+    return 0 // 0 = ما نعرف المدة
+}
+
+function formatDuration(sec) {
+    if (!sec) return "غير معروف"
+    let m = Math.floor(sec / 60)
+    let s = sec % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+}
+
 function getEpisodeNumber(title) {
     let t = String(title)
     let m1 = t.match(/(?:الحلقة|الحلقه|حلقة|حلقه|EP|Ep|Episode)\s*[:\-_#]?\s*(\d+)/i)
@@ -73,12 +101,11 @@ function getEpisodeNumber(title) {
     return 9999
 }
 
-// ===== بحث سريع - طلب واحد بس، صفحة وحدة =====
-async function searchOneFast(query) {
+async function searchOneFast(query, page = 1) {
     try {
         const res = await axios.get(SEARCH_API, {
-            params: { query, page: 1 }, // صفحة وحدة بس - هذا اللي يسرعه
-            timeout: 10000, // 10 ثواني بس، مو 30
+            params: { query, page },
+            timeout: 10000,
             headers: { "X-API-Key": API_KEY, Accept: "application/json", "User-Agent": "YUNO-BOT/1.0" }
         })
         const data = res.data
@@ -86,22 +113,28 @@ async function searchOneFast(query) {
     } catch { return [] }
 }
 
-// ===== بحث متوازي - 3 طلبات مع بعض، مو ورا بعض =====
+// ===== بحث سريع + فلتر 20 دقيقة =====
 async function searchWideFast(query) {
     let key = query.toLowerCase().trim()
-    // اذا بحثنا عنه قبل، نجيبه من الكاش فوراً - بدون بحث
     if (searchCache.has(key)) {
         let c = searchCache.get(key)
         if (Date.now() - c.time < CACHE_TIME) return c.videos
     }
 
-    // 3 صيغ بس، مع بعض في نفس الوقت - كان 8 صيغ ورا بعض
+    // نبحث بـ 4 صيغ مع بعض، وكل صيغة صفحتين، عشان بعد الفلتر يبقى عندنا حلقات كفاية
     let tries = [
         `${query} حلقة`,
         `${query} انمي`,
         query,
+        `${query} مدبلج`,
     ]
-    let results = await Promise.all(tries.map(q => searchOneFast(q)))
+    // نجيب صفحتين لكل صيغة - عشان نعوض اللي بنشيله بالفلتر
+    let allPromises = []
+    for (let q of tries) {
+        allPromises.push(searchOneFast(q, 1))
+        allPromises.push(searchOneFast(q, 2))
+    }
+    let results = await Promise.all(allPromises)
 
     let all = []
     let seen = new Set()
@@ -109,21 +142,32 @@ async function searchWideFast(query) {
         for (let v of res) {
             let url = getFacebookURL(v)
             if (!url || seen.has(url)) continue
+
+            // ===== فلتر المدة - اهم شي =====
+            let dur = getDuration(v)
+            // اذا المدة معروفة واقل من 20 دقيقة، نتخطاه - هذا ريلز او مقطع قصير
+            if (dur > 0 && dur < MIN_DURATION) continue
+            // اذا المدة 0 يعني API ما اعطانا مدة، نفحص العنوان: اذا فيه reel او ريلز او مقطع قصير، نتخطاه
+            let titleLow = String(getTitle(v)).toLowerCase()
+            if (dur === 0 && (titleLow.includes('reel') || titleLow.includes('ريلز') || titleLow.includes('short') || titleLow.includes('مقطع قصير') || titleLow.includes('#reels'))) continue
+            // اذا المدة 0 وما فيه دليل انه قصير، نخليه - عشان ما نخسر حلقات
+            // بس نعطيه مدة افتراضية 20 دقيقة عشان يبين في القائمة
+            if (dur === 0) v._durationGuess = 20 * 60
+
             seen.add(url)
             all.push(v)
         }
-        if (all.length >= 40) break
     }
 
-    // نحفظ في الكاش
-    searchCache.set(key, { time: Date.now(), videos: all.slice(0, 40) })
-    return all.slice(0, 40)
+    // نرتب بالمدة؟ لا، نرتب برقم الحلقة بعدين، بس هنا نرتب مبدئياً
+    searchCache.set(key, { time: Date.now(), videos: all.slice(0, 60) })
+    return all.slice(0, 60)
 }
 
 async function get480Quality(url) {
     try {
         const res = await axios.post(DOWNLOAD_API, { url }, {
-            timeout: 20000, // 20 ثانية بس
+            timeout: 20000,
             headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "YUNO-BOT/1.0" }
         })
         const data = res.data
@@ -165,7 +209,7 @@ async function remuxOnly(inputPath, outputPath) {
 async function getImageBuffer(url) {
     if (!url) return null
     try {
-        const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } }) // 5 ثواني بس
+        const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0' } })
         let buf = Buffer.from(res.data)
         if (buf.length < 5000) return null
         return buf
@@ -180,10 +224,10 @@ async function sendPageWithNext(conn, m, chatData, offset) {
     let pageNum = Math.floor(offset / 12) + 1
     let totalPages = Math.ceil(episodes.length / 12)
 
-    let menuText = `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${page.animeName}\n*┃ 👤 الصفحة :* ${page.author}\n*┃ ✅ افضل صفحة :* ${page.count} حلقة\n*┃ 📊 الحلقات :* ${episodes.length} حلقة\n*┃ 📄 الصفحة :* ${pageNum}/${totalPages}\n*┃ 📅 اخر حلقة :* ${episodes[episodes.length - 1]?.date}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
+    let menuText = `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الانمي :* ${page.animeName}\n*┃ 👤 الصفحة :* ${page.author}\n*┃ ✅ افضل صفحة :* ${page.count} حلقة\n*┃ ⏱️ المدة :* 20 دقيقة وفوق\n*┃ 📊 الحلقات :* ${episodes.length} حلقة\n*┃ 📄 الصفحة :* ${pageNum}/${totalPages}\n*┃ 📅 اخر حلقة :* ${episodes[episodes.length - 1]?.date}\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*\n\n`
     menuText += chunk.map(item => {
         let epLabel = item.epNum === 9999 ? item.title : `الحلقة ${item.epNum}`
-        return `*🍥 ${epLabel}*\n📝 ${item.title}\n📅 ${item.date} | 👤 ${item.author}`
+        return `*🍥 ${epLabel}*\n📝 ${item.title}\n⏱️ ${item.durationText} | 📅 ${item.date} | 👤 ${item.author}`
     }).join("\n\n") + `\n\n👇 *اضغط على الحلقة اللي تبيها، او التالي:*`
 
     let coverBuffer = null
@@ -241,7 +285,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       { type: 'divider' },
       { type: 'info', label: '🍥 بحث', value: `${usedPrefix + command} <اسم الانمي>` },
       { type: 'info', label: 'مثال', value: `${usedPrefix + command} ناروتو شيبودن` },
-      { type: 'info', label: 'الطريقة', value: 'ابحث > 12 حلقة + التالي > اضغط الحلقة' },
+      { type: 'info', label: 'الطريقة', value: 'ابحث > 12 حلقة 20 دقيقة وفوق + التالي > اضغط الحلقة' },
     ]))
   }
 
@@ -267,7 +311,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         video: { url: finalPath },
         mimetype: 'video/mp4',
         fileName: `${cleanName(selected.title)}.mp4`,
-        caption: `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الحلقة :* ${selected.title}\n*┃ 📺 الانمي :* ${selected.animeName}\n*┃ 🔢 رقم الحلقة :* ${selected.epNum === 9999 ? 'غير معروف' : selected.epNum}\n*┃ 📅 تاريخ النزول :* ${selected.date}\n*┃ 👤 الصفحة :* ${selected.author}\n*┃ 📦 الجودة :* 480p دايماً - بحجمها الكامل\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*`
+        caption: `*╭━〔⚡𝐀𝐑𝐓𝐇𝐔𝐑 𝐒𝐘𝐒𝐓𝐄𝐌〕━╮*\n*┃*\n*┃ 🍥 الحلقة :* ${selected.title}\n*┃ 📺 الانمي :* ${selected.animeName}\n*┃ 🔢 رقم الحلقة :* ${selected.epNum === 9999 ? 'غير معروف' : selected.epNum}\n*┃ ⏱️ المدة :* ${selected.durationText}\n*┃ 📅 تاريخ النزول :* ${selected.date}\n*┃ 👤 الصفحة :* ${selected.author}\n*┃ 📦 الجودة :* 480p دايماً - بحجمها الكامل\n*┃*\n*◇❐ ═━╾ 🩸 ╼━═ ❐◇*`
       }, { quoted: m })
       await react('✅')
       try { unlinkSync(finalPath) } catch {}
@@ -291,10 +335,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   try {
     const videos = await searchWideFast(text)
-    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت حلقات') }
+    if (!videos.length) { await react('❌'); return m.reply('❌ ما لقيت حلقات 20 دقيقة وفوق') }
 
     let allVideos = videos.map(v => {
         let title = cleanName(getTitle(v))
+        let dur = getDuration(v) || v._durationGuess || 0
         return {
             id: makeID('ep'),
             title,
@@ -306,6 +351,8 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             url: getFacebookURL(v),
             cover: getCover(v),
             pageCover: getPageCover(v),
+            duration: dur,
+            durationText: formatDuration(dur),
         }
     }).filter(x => x.url)
 
@@ -340,8 +387,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     let bestPage = pages[0]
     if (!bestPage) { await react('❌'); return m.reply('❌ ما لقيت صفحة') }
 
+    // ===== الترتيب - اهم شي =====
     let episodes = allVideos.filter(v => v.authorId === bestPage.authorId)
-    episodes.sort((a, b) => a.epNum - b.epNum)
+    episodes.sort((a, b) => {
+        // اللي عنده رقم حلقة يجي اول، مرتب من 1
+        if (a.epNum === 9999 && b.epNum !== 9999) return 1
+        if (b.epNum === 9999 && a.epNum !== 9999) return -1
+        return a.epNum - b.epNum
+    })
     let seenEp = new Set()
     episodes = episodes.filter(v => {
         if (v.epNum === 9999) return true
