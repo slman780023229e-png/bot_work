@@ -14,13 +14,12 @@ let handler = async (m, { conn }) => {
     try {
 
         // =========================
-        // 🎀 تفاعل
+        // ⚡ تفاعل برق
         // =========================
 
         try {
-            await m.react('🎀')
+            await m.react('⚡')
         } catch {}
-
 
         // =========================
         // 👤 اسم المستخدم
@@ -37,26 +36,25 @@ let handler = async (m, { conn }) => {
         const mention =
             '@' + m.sender.split('@')[0]
 
-
         // =========================
-        // 📞 المطور الأول
+        // 📞 المطور الأول - آرثر
         // =========================
 
         await conn.sendMessage(
             m.chat,
             {
                 contacts: {
-                    displayName: '𝐊𝐀𝐍𝐄𝐊𝐈 🎀✨',
+                    displayName: '𝐀𝐑𝐓𝐇𝐔𝐑 ⚡',
 
                     contacts: [
                         {
-                            displayName: '𝐊𝐀𝐍𝐄𝐊𝐈 🎀✨',
+                            displayName: '𝐀𝐑𝐓𝐇𝐔𝐑 ⚡',
 
                             vcard:
 `BEGIN:VCARD
 VERSION:3.0
-FN:𝐊𝐀𝐍𝐄𝐊𝐈 🎀✨
-TEL;type=CELL;type=VOICE;waid=185899757400132:+185899757400132
+FN:𝐀𝐑𝐓𝐇𝐔𝐑 ⚡
+TEL;type=CELL;type=VOICE;waid=967783028397:+967783028397
 END:VCARD`
                         }
                     ]
@@ -64,7 +62,6 @@ END:VCARD`
             },
             { quoted: m }
         )
-
 
         // =========================
         // 🎥 الفيديو
@@ -77,11 +74,10 @@ END:VCARD`
                     url: 'https://files.catbox.moe/rt9k1c.mp4'
                 },
                 mimetype: 'video/mp4',
-                caption: '*𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 🎀✨*'
+                caption: '*𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡*'
             },
             { quoted: m }
         )
-
 
         // =========================
         // 🖼️ الصورة
@@ -104,7 +100,6 @@ END:VCARD`
                 await res.arrayBuffer()
             )
 
-
         const media =
             await prepareWAMessageMedia(
                 {
@@ -116,27 +111,26 @@ END:VCARD`
                 }
             )
 
-
         // =========================
         // 📝 الكلام
         // =========================
 
         const text =
-`*╭━━𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓🎀𝐁𝐎𝐓━━°⃟✨*
-> *مرحبا يا ${username}* 👋
-
-> ${mention}
-
-> *مطور بوت 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 🎀✨*
-
-> يمكنك الاستفسار عن:
-> • اي كود
-> • اي بوت
-> • اي سيرفر
- +967783028397
-⁩  ╰━━━━━━━━━━°⃟🌺
-*╭━━━━━━━━━━°⃟😽🪭*`
-
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ⚡ ╎ *𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓*
+*┃* ⚡ ╎ *مرحباً يا ${username}* 👋
+*┃*
+*┃* 👤 ╎ ${mention}
+*┃*
+*┃* 🪄 ╎ *مطور بوت 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓*
+*┃*
+*┃* 📜 ╎ *يمكنك الاستفسار عن:*
+*┃* 🔗 ╎ *اي كود*
+*┃* 🚫 ╎ *اي بوت*
+*┃* 👤 ╎ *اي سيرفر*
+*┃*
+*┃* 📞 ╎ *+967783028397*
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
 
         // =========================
         // 🔘 الرسالة + الأزرار
@@ -153,12 +147,12 @@ END:VCARD`
                 footer:
                     proto.Message.InteractiveMessage.Footer.fromObject({
                         text:
-                            '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 🎀✨🌺😽🪭'
+                            '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡'
                     }),
 
                 header:
                     proto.Message.InteractiveMessage.Header.fromObject({
-                        title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 𝐁𝐎𝐓',
+                        title: '𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓',
                         hasMediaAttachment: true,
                         imageMessage:
                             media.imageMessage
@@ -188,7 +182,6 @@ END:VCARD`
 
             })
 
-
         // =========================
         // 📤 إنشاء الرسالة
         // =========================
@@ -214,7 +207,6 @@ END:VCARD`
                 }
             )
 
-
         // =========================
         // 🚀 إرسال الرسالة
         // =========================
@@ -228,9 +220,8 @@ END:VCARD`
             }
         )
 
-
         // =========================
-        // 📞 FERMEL - آخر شيء
+        // 📞 المطور الثاني - سلمان كما هو
         // =========================
 
         await conn.sendMessage(
@@ -258,31 +249,27 @@ END:VCARD`
             { quoted: m }
         )
 
-
     } catch (error) {
 
         console.error(
-            '❌ SPARKIL DEVELOPER ERROR:',
+            '❌ ARTHUR DEVELOPER ERROR:',
             error
         )
 
         try {
 
             await m.reply(
-`*╭━━𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 𝐁𝐎𝐓━━°⃟✨*
-> ❌ حصل خطأ أثناء تنفيذ أمر المطور.
-
-> ${error?.message || 'خطأ غير معروف'}
-
-⁩  ╰━━━━━━━━━━°⃟🌺
-*╭━━━━━━━━━━°⃟😽🪭*`
+`*◇❐ ═━━╾⚡ ╼━━═ ❐◇*
+*┃* ❌ ╎ *حصل خطأ أثناء تنفيذ أمر المطور*
+*┃*
+*┃* ⚡ ╎ ${error?.message || 'خطأ غير معروف'}
+*◇❐ ═━━╾⚡╼━━═ ❐◇*`
             )
 
         } catch {}
 
     }
 }
-
 
 // =========================
 // ⚙️ الأوامر
