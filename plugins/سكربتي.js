@@ -22,23 +22,42 @@ const allowedNumbers = [
     '233144431206490@s.whatsapp.net'
 ]
 
-const handler = async (m, { conn }) => {
+const cleanNum = (v) => String(v || '').split('@')[0].split(':')[0].replace(/\D/g, '')
+
+const handler = async (m, { conn, isOwner, isROwner }) => {
 
     // ═════════════════════════════════════
     // 🔐 التحقق من المطور
     // ═════════════════════════════════════
 
-    if (!allowedNumbers.includes(m.sender)) {
+    const senderNum = cleanNum(m.sender)
+    const botJidNum = cleanNum(conn?.user?.jid || conn?.user?.id)
+    const botLidNum = cleanNum(conn?.user?.lid)
+    const allowedNums = allowedNumbers.map(n => cleanNum(n)).filter(Boolean)
+
+    const isAllowed = Boolean(
+        isROwner ||
+        isOwner ||
+        m.fromMe ||
+        allowedNumbers.includes(m.sender) ||
+        (senderNum && (
+            allowedNums.includes(senderNum) ||
+            senderNum === botJidNum ||
+            (botLidNum && senderNum === botLidNum)
+        ))
+    )
+
+    if (!isAllowed) {
 
         await conn.sendMessage(
             m.chat,
             {
                 text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 🔐 〕━━━╮*
-*┃* ❌ هذا الأمر للمطورين فقط.
-*┃*
-*┃* 👑 حقوق 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓
-*╰━━━━━━━━━━━━━━╯*`
+`*◇❐ ═━━╾ 🔒 ╼━━═ ❐◇*
+*┃* ── 🛑 🛡️  ◈ ──
+*┃ *🚫 الصلاحية:* هذا الأمر للمطورين فقط
+*┃ *👑 النظام:* 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`
             },
             { quoted: m }
         )
@@ -63,9 +82,10 @@ const handler = async (m, { conn }) => {
                 m.chat,
                 {
                     text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📂 〕━━━╮*
-*┃* 📖 جاري قراءة ملفات البوت...
-*╰━━━━━━━━━━━━━━╯*`
+`*◇❐ ═━━╾ 📂 ╼━━═ ❐◇*
+*┃* ── 🔍 📜  ✦ ──
+*┃ *⚙️ الحالة:* جاري فحص وقراءة ملفات البوت
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`
                 },
                 { quoted: m }
             )
@@ -83,7 +103,10 @@ const handler = async (m, { conn }) => {
                 m.chat,
                 {
                     text:
-                        '⚠️ لا توجد ملفات لضغطها.',
+`*◇❐ ═━━╾ ⚠️ ╼━━═ ❐◇*
+*┃* ── 📭 🧩  ◈ ──
+*┃ *📁 التنبيه:* لا توجد ملفات لضغطها
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                     edit: initialMessage.key
                 },
                 { quoted: m }
@@ -101,11 +124,11 @@ const handler = async (m, { conn }) => {
                 m.chat,
                 {
                     text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 📦 〕━━━╮*
-*┃* 🔎 تم العثور على ${files.length} ملفات/مجلدات.
-*┃*
-*┃* 🔄 جاري إنشاء ملف ZIP...
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ 📦 ╼━━═ ❐◇*
+*┃* ── 📊 🗂️  ✦ ──
+*┃ *📁 العناصر:* تم العثور على ${files.length} ملف/مجلد
+*┃ *⚙️ الحالة:* جاري تجهيز أرشيف ZIP
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                     edit: initialMessage.key
                 },
                 { quoted: m }
@@ -119,9 +142,10 @@ const handler = async (m, { conn }) => {
                 m.chat,
                 {
                     text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⏳ 〕━━━╮*
-*┃* 📦 يتم الآن ضغط ملفات البوت...
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ ⏳ ╼━━═ ❐◇*
+*┃* ── ⚙️ 🗜️  ◈ ──
+*┃ *📦 الضغط:* يتم الآن ضغط ملفات السكربت
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                     edit: zippingMessage.key
                 },
                 { quoted: m }
@@ -144,11 +168,11 @@ const handler = async (m, { conn }) => {
                         m.chat,
                         {
                             text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮*
-*┃* حدث خطأ أثناء إنشاء ملف ZIP:
-*┃*
-*┃* ${error.message}
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ ❌ ╼━━═ ❐◇*
+*┃* ── 💥 🔧  ◈ ──
+*┃ *⚠️ الخطأ:* تعذر إنشاء ملف ZIP
+*┃ *📜 التفاصيل:* ${error.message}
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                             edit: processingMessage.key
                         },
                         { quoted: m }
@@ -163,9 +187,10 @@ const handler = async (m, { conn }) => {
                         m.chat,
                         {
                             text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮*
-*┃* لم يتم إنشاء ملف ZIP.
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ ❌ ╼━━═ ❐◇*
+*┃* ── 📭 🗜️  ◈ ──
+*┃ *⚠️ النتيجة:* لم يتم العثور على ملف ZIP بعد الضغط
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                             edit: processingMessage.key
                         },
                         { quoted: m }
@@ -183,11 +208,11 @@ const handler = async (m, { conn }) => {
                         m.chat,
                         {
                             text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✅ 〕━━━╮*
-*┃* تم إنشاء ملف ZIP بنجاح.
-*┃*
-*┃* 📤 جاري إرسال ملفات البوت...
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ 📤 ╼━━═ ❐◇*
+*┃* ── ✅ 🎁  ✦ ──
+*┃ *📦 الأرشيف:* تم إنشاء ملف ZIP بنجاح
+*┃ *🚀 الإرسال:* جاري إرسال ملفات البوت
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                             edit: processingMessage.key
                         },
                         { quoted: m }
@@ -222,11 +247,11 @@ const handler = async (m, { conn }) => {
                                 m.chat,
                                 {
                                     text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 🗑️ 〕━━━╮*
-*┃* تم إرسال ملفات البوت بنجاح.
-*┃*
-*┃* 🗑️ تم حذف ملف ZIP المؤقت.
-*╰━━━━━━━━━━━━━━╯*`,
+`*◇❐ ═━━╾ 🧹 ╼━━═ ❐◇*
+*┃* ── ✨ 🗑️  ✦ ──
+*┃ *📤 التسليم:* تم إرسال السكربت بنجاح
+*┃ *🗂️ التنظيف:* تم حذف الملف المؤقت
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`,
                                     edit: sendingMessage.key
                                 },
                                 { quoted: m }
@@ -248,11 +273,11 @@ const handler = async (m, { conn }) => {
             m.chat,
             {
                 text:
-`*╭━━━〔 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ❌ 〕━━━╮*
-*┃* فشل في معالجة ملفات البوت.
-*┃*
-*┃* ${err.message}
-*╰━━━━━━━━━━━━━━╯*`
+`*◇❐ ═━━╾ ❌ ╼━━═ ❐◇*
+*┃* ── 💥 🛠️  ◈ ──
+*┃ *⚠️ الخطأ:* فشل في معالجة ملفات البوت
+*┃ *📜 التفاصيل:* ${err.message}
+*◇❐ ═━━╾ ✦ ╼━━═ ❐◇*`
             },
             { quoted: m }
         )
@@ -260,7 +285,8 @@ const handler = async (m, { conn }) => {
 }
 
 handler.help = ['سكربتي']
-handler.tags = ['owner']
+handler.category = 'المطور'
+handler.tags = ['owner', 'المطور']
 handler.command = /^(سكربتي)$/i
 
 export default handler
