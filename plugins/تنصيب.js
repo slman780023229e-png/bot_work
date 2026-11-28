@@ -1,7 +1,7 @@
 // plugins/jadibot.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - كود ثابت ARTHUR78 🤖
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - Baileys v7 - كود ثابت ARTHUR78 + زر نسخ 🤖
 
-import { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys'
+import { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, makeCacheableSignalKeyStore, proto, generateWAMessageFromContent, generateWAMessageContent } from "baileys"
 import NodeCache from "node-cache"
 import fs from "fs"
 import path from "path"
@@ -16,8 +16,7 @@ const gataJBOptions = {}
 const maxAttempts = 5
 if (!(global.conns instanceof Array)) global.conns = []
 
-// ✅ الكود الثابت حقك
-const FIXED_CODE = 'ARTHUR78' // ارثر + 78
+const FIXED_CODE = 'ARTHUR78'
 
 function extractNumber(input) {
     let cleaned = String(input || '').replace(/[\s\-\(\)\.]/g, '')
@@ -31,20 +30,16 @@ function isValidPhoneNumber(number) {
     number = String(number).replace(/\D/g, '')
     if (number.length < 7 || number.length > 15) return false
     if (/^(\d)\1+$/.test(number)) return false
-    // ✅ ارفض LID - يبدأ بـ 115 وطوله 11
     if (number.startsWith('115') && number.length === 11) return false
     return true
 }
 
-// ✅ تنظيف الرقم - يشيل :0 حق الجهاز و @s.whatsapp.net
 function cleanNum(jid) {
     if (!jid) return ''
     return String(jid).split(':')[0].split('@')[0].replace(/\D/g, '')
 }
 
-// ✅ تجيب الرقم الحقيقي لأي شخص، مو LID، وبدون صفر زيادة
 async function getRealNumber(m, conn) {
-    // 1. حاول من الرسالة نفسها
     let candidates = [
         m.key?.participantPn,
         m.key?.remoteJidPn,
@@ -52,14 +47,11 @@ async function getRealNumber(m, conn) {
         m.key?.participantAlt,
         m.senderPn
     ]
-
     for (let c of candidates) {
         let num = cleanNum(c)
         if (num.startsWith('967') && num.length === 12) return num
         if (num.length >= 7 && num.length <= 15 && !num.startsWith('115')) return num
     }
-
-    // 2. حاول من معلومات القروب - القروب فيه ربط LID -> PN
     try {
         if (m.isGroup) {
             const meta = await conn.groupMetadata(m.chat)
@@ -75,8 +67,6 @@ async function getRealNumber(m, conn) {
             }
         }
     } catch {}
-
-    // 3. حاول من ذاكرة البوت LID Mapping
     try {
         const lid = cleanNum(m.sender)
         if (conn.signalRepository?.lidMapping?.getPNForLID) {
@@ -94,13 +84,10 @@ async function getRealNumber(m, conn) {
             }
         }
     } catch {}
-
-    // 4. في الخاص، m.chat نفسه احيانا يكون PN
     try {
         let chatNum = cleanNum(m.chat)
         if (!m.isGroup && chatNum.length >= 7 && chatNum.length <= 15 && !chatNum.startsWith('115')) return chatNum
     } catch {}
-
     return ''
 }
 
@@ -129,12 +116,9 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         let fullText = args.join(' ') || (text || '')
         let number = extractNumber(fullText)
 
-        // ✅ اذا ما كتب رقم، جيب رقم اللي ارسل الرسالة (اي شخص) تلقائياً
         if (!number) {
             number = await getRealNumber(m, conn)
-            // تأكد انه مو LID
             if (number.startsWith('115') || number.length > 15) number = ''
-
             if (number && isValidPhoneNumber(number)) {
                 await m.reply(`🤖 *تم اخذ رقمك الحقيقي تلقائياً:* ${number}\n⏳ جاري تجهيز البوت الفرعي لك...`)
             } else {
@@ -176,7 +160,6 @@ export async function gataJadiBot(options, number) {
 
     try {
         const { version } = await fetchLatestWaWebVersion()
-        const msgRetry = (MessageRetryMap) => {}
         const msgRetryCache = new NodeCache()
         const { state, saveState, saveCreds } = await useMultiFileAuthState(pathGataJadiBot)
 
@@ -184,7 +167,6 @@ export async function gataJadiBot(options, number) {
             logger: pino({ level: 'fatal' }),
             printQRInTerminal: false,
             auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })) },
-            msgRetry,
             msgRetryCache,
             browser: ['Windows', 'Chrome', '110.0.5481.177'],
             version: version,
@@ -203,18 +185,20 @@ export async function gataJadiBot(options, number) {
             if (qr) {
                 try {
                     let secret = ''
+                    let isFixed = true
                     try {
                         secret = await sock.requestPairingCode(number, FIXED_CODE)
                         console.log('[jadibot] تم طلب الكود الثابت ARTHUR78 للرقم', number)
                     } catch (e) {
                         console.log('[jadibot] واتساب رفض الكود الثابت، بجيب كود عشوائي:', e.message)
+                        isFixed = false
                         secret = await sock.requestPairingCode(number)
                     }
                     secret = secret?.match(/.{1,4}/g)?.join('-') || secret
+                    let copyCode = secret.replace(/-/g, '')
 
                     if (m?.chat) {
-                        const imageUrl = 'https://files.catbox.moe/30s6np.jpg'
-                        let msg = `♡⃟⃝ ♡ ☙ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ☙ ♡
+                        let captionText = `♡⃟⃝ ♡ ☙ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ☙ ♡
 ☙ ⃞̸͢𑁃̚ ♡ ⃞̸͢𑁃̚ ☙
 │
 │ ♡ *🤖 تـنـصـيـب بـوت فـرعـي*
@@ -230,14 +214,54 @@ export async function gataJadiBot(options, number) {
 │ ❹ اختر ربط برقم الهاتف
 │ ❺ أدخل الكود أعلاه
 │
-♡⃟⃝ ♡ ☙ ☘ ☙ ♡ ♡⃟⃝`
+♡⃟⃝ ♡ ☙ ☘ ☙ ♡ ♡⃟⃝
 
-                        await conn.sendMessage(m.chat, {
-                            image: { url: imageUrl },
-                            caption: msg,
-                            footer: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧'
+👇 *اضغط زر نسخ الكود تحت، والصقه في الواتساب:*`
+
+                        // ===== زر نسخ حقيقي - Baileys v7 =====
+                        // cta_copy = زر ينسخ الكود تلقائياً
+                        const imageUrl = 'https://files.catbox.moe/30s6np.jpg'
+                        let coverBuffer = null
+                        try {
+                            const res = await fetch(imageUrl)
+                            coverBuffer = Buffer.from(await res.arrayBuffer())
+                        } catch {}
+
+                        let headerObj = {}
+                        if (coverBuffer) {
+                            const { imageMessage } = await generateWAMessageContent({ image: coverBuffer }, { upload: conn.waUploadToServer })
+                            if (imageMessage) headerObj = { hasMediaAttachment: true, imageMessage }
+                        }
+
+                        const buttons = [
+                            {
+                                name: "cta_copy",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "📋 نسخ الكود",
+                                    copy_code: copyCode
+                                })
+                            },
+                            {
+                                name: "quick_reply",
+                                buttonParamsJson: JSON.stringify({
+                                    display_text: "🔄 كود جديد",
+                                    id: `.تنصيب ${number}`
+                                })
+                            }
+                        ]
+
+                        const msg = generateWAMessageFromContent(m.chat, {
+                            viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                                body: proto.Message.InteractiveMessage.Body.create({ text: captionText }),
+                                footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧' }),
+                                header: proto.Message.InteractiveMessage.Header.fromObject(headerObj),
+                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
+                            })}}
                         }, { quoted: m })
-                        await conn.sendMessage(m.chat, { text: `📋 *الكود للنسخ:*\n\`${secret}\`\n\n🔑 الكود الثابت: \`${FIXED_CODE}\`` }, { quoted: m })
+                        await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+
+                        // رسالة احتياطية اذا زر النسخ ما ظهر عند بعض الاجهزة
+                        await conn.sendMessage(m.chat, { text: `📋 *الكود للنسخ اليدوي:*\n\`${copyCode}\`` }, { quoted: m })
                     }
                     console.log('[jadibot] كود التنصيب للرقم', number, ':', secret)
                 } catch (e) {
