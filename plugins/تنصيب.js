@@ -1,5 +1,5 @@
 // plugins/jadibot.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - Baileys v7 - كود ثابت ARTHUR78 + زر نسخ حقيقي 🤖
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - رسالة وحدة: صورة + زر نسخ ✅
 
 import { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, makeCacheableSignalKeyStore, proto, generateWAMessageFromContent, generateWAMessageContent } from "baileys"
 import NodeCache from "node-cache"
@@ -91,6 +91,36 @@ async function getRealNumber(m, conn) {
     return ''
 }
 
+// ===== رسالة وحدة: صورة + زر نسخ - نفس طريقة نسخ.js =====
+async function sendCodeWithImage(conn, m, captionText, copyCode, number) {
+    let headerObj = {}
+    try {
+        const res = await fetch('https://files.catbox.moe/30s6np.jpg')
+        const buf = Buffer.from(await res.arrayBuffer())
+        const { imageMessage } = await generateWAMessageContent({ image: buf }, { upload: conn.waUploadToServer })
+        if (imageMessage) headerObj = { hasMediaAttachment: true, imageMessage }
+    } catch {}
+
+    let msg = generateWAMessageFromContent(m.chat, {
+        viewOnceMessage: {
+            message: {
+                messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
+                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                    body: proto.Message.InteractiveMessage.Body.create({ text: captionText }),
+                    footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧' }),
+                    header: proto.Message.InteractiveMessage.Header.fromObject(headerObj),
+                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({
+                        buttons: [
+                            { name: "cta_copy", buttonParamsJson: JSON.stringify({ display_text: "📋 نسخ الكود", copy_code: copyCode }) }
+                        ]
+                    })
+                })
+            }
+        }
+    }, { quoted: m })
+    await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+}
+
 let handler = async (m, { conn, args, usedPrefix, command, text }) => {
     try {
         let jadibotOn = true
@@ -119,16 +149,11 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         if (!number) {
             number = await getRealNumber(m, conn)
             if (number.startsWith('115') || number.length > 15) number = ''
-            if (number && isValidPhoneNumber(number)) {
-                await m.reply(`🤖 *تم اخذ رقمك الحقيقي تلقائياً:* ${number}\n⏳ جاري تجهيز البوت الفرعي لك...`)
-            } else {
-                number = ''
+            if (!number || !isValidPhoneNumber(number)) {
+                return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n📌 اكتب رقمك: ${usedPrefix + command} 967780023229`)
             }
         }
 
-        if (!number) {
-            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ ما قدرت اقرأ رقمك الحقيقي تلقائياً\n\n📌 اكتب رقمك: ${usedPrefix + command} 967780023229`)
-        }
         if (!isValidPhoneNumber(number)) {
             return m.reply(`❌ *رقم غير صالح:* ${number}`)
         }
@@ -144,7 +169,9 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         gataJBOptions.usedPrefix = usedPrefix
         gataJBOptions.command = command
         gataJBOptions.fromCommand = true
-        await m.reply(`⏳ *جاري تجهيز البوت الفرعي للرقم:* ${number}\n\n🔑 الكود بيكون: *${FIXED_CODE}*`)
+
+        // رسالة وحدة بس قبل الطلب
+        await m.reply(`⏳ *جاري طلب الكود...*`)
         gataJadiBot(gataJBOptions, number)
     } catch (e) {
         return m.reply(`❌ خطأ: ${e.message}`)
@@ -187,12 +214,9 @@ export async function gataJadiBot(options, number) {
                     let secret = ''
                     try {
                         secret = await sock.requestPairingCode(number, FIXED_CODE)
-                        console.log('[jadibot] تم طلب الكود الثابت ARTHUR78 للرقم', number)
                     } catch (e) {
-                        console.log('[jadibot] واتساب رفض الكود الثابت، بجيب كود عشوائي:', e.message)
                         secret = await sock.requestPairingCode(number)
                     }
-                    // الكود للعرض مع داش، والكود للنسخ بدون داش
                     let secretDisplay = secret?.match(/.{1,4}/g)?.join('-') || secret
                     let copyCode = String(secret || '').replace(/-/g, '').trim()
 
@@ -204,7 +228,6 @@ export async function gataJadiBot(options, number) {
 │
 │ ♡ ˖⁺‧₊˚♡˚₊‧⁺˖ ♡
 │ ⚔️ *الـكـود:* ${secretDisplay}
-│ 🔑 الكود الثابت: ${FIXED_CODE}
 │
 │ ❄️ *الـخـطـوات:*
 │ ❶ افتح الواتساب على رقم ${number}
@@ -217,47 +240,8 @@ export async function gataJadiBot(options, number) {
 
 👇 *اضغط زر نسخ الكود تحت:*`
 
-                        // 1. الصورة لحالها - عشان ما تخرب زر النسخ
-                        try {
-                            await conn.sendMessage(m.chat, {
-                                image: { url: 'https://files.catbox.moe/30s6np.jpg' },
-                                caption: `🤖 *بوت فرعي للرقم:* ${number}\n🔑 الكود: *${secretDisplay}*`
-                            }, { quoted: m })
-                        } catch {}
-
-                        // 2. زر النسخ - بدون صورة، بدون viewOnce، عشان واتساب يظهره
-                        try {
-                            const buttons = [
-                                {
-                                    name: "cta_copy",
-                                    buttonParamsJson: JSON.stringify({
-                                        display_text: "📋 نسخ الكود",
-                                        copy_code: copyCode,
-                                        id: "copy_code"
-                                    })
-                                },
-                                {
-                                    name: "quick_reply",
-                                    buttonParamsJson: JSON.stringify({
-                                        display_text: "🔄 كود جديد",
-                                        id: `.تنصيب ${number}`
-                                    })
-                                }
-                            ]
-
-                            const msg = generateWAMessageFromContent(m.chat, {
-                                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                                    body: proto.Message.InteractiveMessage.Body.create({ text: captionText }),
-                                    footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧' }),
-                                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
-                                })
-                            }, { quoted: m })
-
-                            await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-                        } catch (e) {
-                            console.log('[jadibot] زر النسخ ما زبط، نرسل نص عادي:', e.message)
-                            await conn.sendMessage(m.chat, { text: `📋 *الكود للنسخ:*\n\`${copyCode}\`` }, { quoted: m })
-                        }
+                        // رسالة وحدة بس: صورة + زر نسخ
+                        await sendCodeWithImage(conn, m, captionText, copyCode, number)
                     }
                     console.log('[jadibot] كود التنصيب للرقم', number, ':', secretDisplay)
                 } catch (e) {
