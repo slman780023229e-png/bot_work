@@ -31,7 +31,77 @@ function isValidPhoneNumber(number) {
     number = String(number).replace(/\D/g, '')
     if (number.length < 7 || number.length > 15) return false
     if (/^(\d)\1+$/.test(number)) return false
+    // ✅ ارفض LID - يبدأ بـ 115 وطوله 11
+    if (number.startsWith('115') && number.length === 11) return false
     return true
+}
+
+// ✅ تنظيف الرقم - يشيل :0 حق الجهاز و @s.whatsapp.net
+function cleanNum(jid) {
+    if (!jid) return ''
+    return String(jid).split(':')[0].split('@')[0].replace(/\D/g, '')
+}
+
+// ✅ تجيب الرقم الحقيقي لأي شخص، مو LID، وبدون صفر زيادة
+async function getRealNumber(m, conn) {
+    // 1. حاول من الرسالة نفسها
+    let candidates = [
+        m.key?.participantPn,
+        m.key?.remoteJidPn,
+        m.participantPn,
+        m.key?.participantAlt,
+        m.senderPn
+    ]
+
+    for (let c of candidates) {
+        let num = cleanNum(c)
+        if (num.startsWith('967') && num.length === 12) return num
+        if (num.length >= 7 && num.length <= 15 && !num.startsWith('115')) return num
+    }
+
+    // 2. حاول من معلومات القروب - القروب فيه ربط LID -> PN
+    try {
+        if (m.isGroup) {
+            const meta = await conn.groupMetadata(m.chat)
+            const me = meta?.participants?.find(p => p.id === m.sender || p.lid === m.sender || p.jid === m.sender)
+            if (me?.pn) {
+                let num = cleanNum(me.pn)
+                if (num.length >= 7 && num.length <= 15) return num
+            }
+            const byLid = meta?.participants?.find(p => cleanNum(p.lid) === cleanNum(m.sender))
+            if (byLid?.pn) {
+                let num = cleanNum(byLid.pn)
+                if (num.length >= 7 && num.length <= 15) return num
+            }
+        }
+    } catch {}
+
+    // 3. حاول من ذاكرة البوت LID Mapping
+    try {
+        const lid = cleanNum(m.sender)
+        if (conn.signalRepository?.lidMapping?.getPNForLID) {
+            const pn = await conn.signalRepository.lidMapping.getPNForLID(`${lid}@lid`)
+            if (pn) {
+                let num = cleanNum(pn)
+                if (num.length >= 7 && num.length <= 15) return num
+            }
+        }
+        if (conn.getJidFromLid) {
+            const pn = await conn.getJidFromLid(`${lid}@lid`).catch(() => null)
+            if (pn) {
+                let num = cleanNum(pn)
+                if (num.length >= 7 && num.length <= 15) return num
+            }
+        }
+    } catch {}
+
+    // 4. في الخاص، m.chat نفسه احيانا يكون PN
+    try {
+        let chatNum = cleanNum(m.chat)
+        if (!m.isGroup && chatNum.length >= 7 && chatNum.length <= 15 && !chatNum.startsWith('115')) return chatNum
+    } catch {}
+
+    return ''
 }
 
 let handler = async (m, { conn, args, usedPrefix, command, text }) => {
@@ -59,8 +129,21 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         let fullText = args.join(' ') || (text || '')
         let number = extractNumber(fullText)
 
+        // ✅ اذا ما كتب رقم، جيب رقم اللي ارسل الرسالة (اي شخص) تلقائياً
         if (!number) {
-            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ يرجى كتابة رقم الهاتف مع كود الدولة\n\n📌 مثال: ${usedPrefix + command} 967780023229`)
+            number = await getRealNumber(m, conn)
+            // تأكد انه مو LID
+            if (number.startsWith('115') || number.length > 15) number = ''
+
+            if (number && isValidPhoneNumber(number)) {
+                await m.reply(`🤖 *تم اخذ رقمك الحقيقي تلقائياً:* ${number}\n⏳ جاري تجهيز البوت الفرعي لك...`)
+            } else {
+                number = ''
+            }
+        }
+
+        if (!number) {
+            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ ما قدرت اقرأ رقمك الحقيقي تلقائياً\n\n📌 اكتب رقمك: ${usedPrefix + command} 967780023229`)
         }
         if (!isValidPhoneNumber(number)) {
             return m.reply(`❌ *رقم غير صالح:* ${number}`)
@@ -119,7 +202,6 @@ export async function gataJadiBot(options, number) {
             if (isNewLogin) sock.isInit = false
             if (qr) {
                 try {
-                    // ✅ الكود الثابت ARTHUR78 - ارثر + 78
                     let secret = ''
                     try {
                         secret = await sock.requestPairingCode(number, FIXED_CODE)
