@@ -1,5 +1,5 @@
 // plugins/jadibot.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - Baileys v7 - كود ثابت ARTHUR78 + زر نسخ 🤖
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - Baileys v7 - كود ثابت ARTHUR78 + زر نسخ حقيقي 🤖
 
 import { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, makeCacheableSignalKeyStore, proto, generateWAMessageFromContent, generateWAMessageContent } from "baileys"
 import NodeCache from "node-cache"
@@ -185,17 +185,16 @@ export async function gataJadiBot(options, number) {
             if (qr) {
                 try {
                     let secret = ''
-                    let isFixed = true
                     try {
                         secret = await sock.requestPairingCode(number, FIXED_CODE)
                         console.log('[jadibot] تم طلب الكود الثابت ARTHUR78 للرقم', number)
                     } catch (e) {
                         console.log('[jadibot] واتساب رفض الكود الثابت، بجيب كود عشوائي:', e.message)
-                        isFixed = false
                         secret = await sock.requestPairingCode(number)
                     }
-                    secret = secret?.match(/.{1,4}/g)?.join('-') || secret
-                    let copyCode = secret.replace(/-/g, '')
+                    // الكود للعرض مع داش، والكود للنسخ بدون داش
+                    let secretDisplay = secret?.match(/.{1,4}/g)?.join('-') || secret
+                    let copyCode = String(secret || '').replace(/-/g, '').trim()
 
                     if (m?.chat) {
                         let captionText = `♡⃟⃝ ♡ ☙ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ☙ ♡
@@ -204,7 +203,7 @@ export async function gataJadiBot(options, number) {
 │ ♡ *🤖 تـنـصـيـب بـوت فـرعـي*
 │
 │ ♡ ˖⁺‧₊˚♡˚₊‧⁺˖ ♡
-│ ⚔️ *الـكـود:* ${secret}
+│ ⚔️ *الـكـود:* ${secretDisplay}
 │ 🔑 الكود الثابت: ${FIXED_CODE}
 │
 │ ❄️ *الـخـطـوات:*
@@ -216,54 +215,51 @@ export async function gataJadiBot(options, number) {
 │
 ♡⃟⃝ ♡ ☙ ☘ ☙ ♡ ♡⃟⃝
 
-👇 *اضغط زر نسخ الكود تحت، والصقه في الواتساب:*`
+👇 *اضغط زر نسخ الكود تحت:*`
 
-                        // ===== زر نسخ حقيقي - Baileys v7 =====
-                        // cta_copy = زر ينسخ الكود تلقائياً
-                        const imageUrl = 'https://files.catbox.moe/30s6np.jpg'
-                        let coverBuffer = null
+                        // 1. الصورة لحالها - عشان ما تخرب زر النسخ
                         try {
-                            const res = await fetch(imageUrl)
-                            coverBuffer = Buffer.from(await res.arrayBuffer())
+                            await conn.sendMessage(m.chat, {
+                                image: { url: 'https://files.catbox.moe/30s6np.jpg' },
+                                caption: `🤖 *بوت فرعي للرقم:* ${number}\n🔑 الكود: *${secretDisplay}*`
+                            }, { quoted: m })
                         } catch {}
 
-                        let headerObj = {}
-                        if (coverBuffer) {
-                            const { imageMessage } = await generateWAMessageContent({ image: coverBuffer }, { upload: conn.waUploadToServer })
-                            if (imageMessage) headerObj = { hasMediaAttachment: true, imageMessage }
+                        // 2. زر النسخ - بدون صورة، بدون viewOnce، عشان واتساب يظهره
+                        try {
+                            const buttons = [
+                                {
+                                    name: "cta_copy",
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: "📋 نسخ الكود",
+                                        copy_code: copyCode,
+                                        id: "copy_code"
+                                    })
+                                },
+                                {
+                                    name: "quick_reply",
+                                    buttonParamsJson: JSON.stringify({
+                                        display_text: "🔄 كود جديد",
+                                        id: `.تنصيب ${number}`
+                                    })
+                                }
+                            ]
+
+                            const msg = generateWAMessageFromContent(m.chat, {
+                                interactiveMessage: proto.Message.InteractiveMessage.fromObject({
+                                    body: proto.Message.InteractiveMessage.Body.create({ text: captionText }),
+                                    footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧' }),
+                                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
+                                })
+                            }, { quoted: m })
+
+                            await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
+                        } catch (e) {
+                            console.log('[jadibot] زر النسخ ما زبط، نرسل نص عادي:', e.message)
+                            await conn.sendMessage(m.chat, { text: `📋 *الكود للنسخ:*\n\`${copyCode}\`` }, { quoted: m })
                         }
-
-                        const buttons = [
-                            {
-                                name: "cta_copy",
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: "📋 نسخ الكود",
-                                    copy_code: copyCode
-                                })
-                            },
-                            {
-                                name: "quick_reply",
-                                buttonParamsJson: JSON.stringify({
-                                    display_text: "🔄 كود جديد",
-                                    id: `.تنصيب ${number}`
-                                })
-                            }
-                        ]
-
-                        const msg = generateWAMessageFromContent(m.chat, {
-                            viewOnceMessage: { message: { interactiveMessage: proto.Message.InteractiveMessage.fromObject({
-                                body: proto.Message.InteractiveMessage.Body.create({ text: captionText }),
-                                footer: proto.Message.InteractiveMessage.Footer.create({ text: '✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ✧' }),
-                                header: proto.Message.InteractiveMessage.Header.fromObject(headerObj),
-                                nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.fromObject({ buttons })
-                            })}}
-                        }, { quoted: m })
-                        await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
-
-                        // رسالة احتياطية اذا زر النسخ ما ظهر عند بعض الاجهزة
-                        await conn.sendMessage(m.chat, { text: `📋 *الكود للنسخ اليدوي:*\n\`${copyCode}\`` }, { quoted: m })
                     }
-                    console.log('[jadibot] كود التنصيب للرقم', number, ':', secret)
+                    console.log('[jadibot] كود التنصيب للرقم', number, ':', secretDisplay)
                 } catch (e) {
                     console.log('[jadibot] فشل طلب الكود:', e.message)
                     if (m?.chat) await conn.sendMessage(m.chat, { text: `❌ فشل طلب الكود للرقم ${number}\n\nالسبب: ${e.message}` }, { quoted: m })
