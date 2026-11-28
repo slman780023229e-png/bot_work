@@ -2,13 +2,22 @@
 import { proto, generateWAMessageFromContent } from "baileys"
 
 let handler = async (m, { conn, text }) => {
-  let quoted = m.quoted ? m.quoted : m.msg?.contextInfo?.quotedMessage ? { message: m.msg.contextInfo.quotedMessage } : null
+  let q = m.quoted || null
   let qText = ""
   try {
-    qText = quoted?.text || quoted?.caption || quoted?.conversation || quoted?.message?.conversation || quoted?.message?.extendedTextMessage?.text || quoted?.message?.imageMessage?.caption || quoted?.message?.videoMessage?.caption || ""
+    if (q) {
+      qText = q.text || q.caption || q.conversation || q.message?.conversation || q.message?.extendedTextMessage?.text || q.message?.imageMessage?.caption || q.message?.videoMessage?.caption || ""
+    } else if (m.msg?.contextInfo?.quotedMessage) {
+      let mq = m.msg.contextInfo.quotedMessage
+      qText = mq.conversation || mq.extendedTextMessage?.text || mq.imageMessage?.caption || mq.videoMessage?.caption || ""
+    }
   } catch {}
 
-  let toCopy = text?.trim() || qText || "ARTHUR BOT ⚡"
+  let arg = (text || "").trim()
+  if (arg.toLowerCase() == "نسخ" || arg.toLowerCase() == "copy") arg = ""
+
+  let toCopy = arg || qText || ""
+  if (!toCopy) return m.reply("❌ رد على رسالة فيها نص او اكتب .نسخ النص")
 
   let msg = generateWAMessageFromContent(m.chat, {
     viewOnceMessage: {
@@ -27,8 +36,7 @@ let handler = async (m, { conn, text }) => {
 
   await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
 }
-
-handler.help = ['نسخ - ينسخ نص او رد']
+handler.help = ['نسخ']
 handler.tags = ['tools']
 handler.command = /^(نسخ|copy)$/i
 export default handler

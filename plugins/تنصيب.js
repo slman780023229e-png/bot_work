@@ -1,5 +1,6 @@
 // plugins/jadibot.js
-// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - رسالة وحدة: صورة + زر نسخ ✅
+// ✧ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 - تنصيب بوت فرعي - Baileys v7 - كود ثابت ARTHUR78 + زر نسخ 🤖
+// ✅ نفس الكود الشغال عندك، بس عدلت: رسالة وحدة (صورة + زر نسخ)
 
 import { useMultiFileAuthState, DisconnectReason, fetchLatestWaWebVersion, makeCacheableSignalKeyStore, proto, generateWAMessageFromContent, generateWAMessageContent } from "baileys"
 import NodeCache from "node-cache"
@@ -91,8 +92,8 @@ async function getRealNumber(m, conn) {
     return ''
 }
 
-// ===== رسالة وحدة: صورة + زر نسخ - نفس طريقة نسخ.js =====
-async function sendCodeWithImage(conn, m, captionText, copyCode, number) {
+// ===== ✅ التعديل 1: دالة رسالة وحدة - صورة + زر نسخ - نفس طريقة نسخ.js =====
+async function sendCodeWithImage(conn, m, captionText, copyCode) {
     let headerObj = {}
     try {
         const res = await fetch('https://files.catbox.moe/30s6np.jpg')
@@ -101,7 +102,7 @@ async function sendCodeWithImage(conn, m, captionText, copyCode, number) {
         if (imageMessage) headerObj = { hasMediaAttachment: true, imageMessage }
     } catch {}
 
-    let msg = generateWAMessageFromContent(m.chat, {
+    const msg = generateWAMessageFromContent(m.chat, {
         viewOnceMessage: {
             message: {
                 messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 },
@@ -149,11 +150,16 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         if (!number) {
             number = await getRealNumber(m, conn)
             if (number.startsWith('115') || number.length > 15) number = ''
-            if (!number || !isValidPhoneNumber(number)) {
-                return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n📌 اكتب رقمك: ${usedPrefix + command} 967780023229`)
+            if (number && isValidPhoneNumber(number)) {
+                await m.reply(`🤖 *تم اخذ رقمك الحقيقي تلقائياً:* ${number}\n⏳ جاري طلب الكود...`)
+            } else {
+                number = ''
             }
         }
 
+        if (!number) {
+            return m.reply(`🤖 *تـنـصـيـب بـوت فـرعـي*\n\n⚠️ ما قدرت اقرأ رقمك الحقيقي تلقائياً\n\n📌 اكتب رقمك: ${usedPrefix + command} 967780023229`)
+        }
         if (!isValidPhoneNumber(number)) {
             return m.reply(`❌ *رقم غير صالح:* ${number}`)
         }
@@ -169,8 +175,7 @@ let handler = async (m, { conn, args, usedPrefix, command, text }) => {
         gataJBOptions.usedPrefix = usedPrefix
         gataJBOptions.command = command
         gataJBOptions.fromCommand = true
-
-        // رسالة وحدة بس قبل الطلب
+        // ✅ التعديل 2: رسالة وحدة بس قبل الطلب
         await m.reply(`⏳ *جاري طلب الكود...*`)
         gataJadiBot(gataJBOptions, number)
     } catch (e) {
@@ -212,13 +217,17 @@ export async function gataJadiBot(options, number) {
             if (qr) {
                 try {
                     let secret = ''
+                    let isFixed = true
                     try {
                         secret = await sock.requestPairingCode(number, FIXED_CODE)
+                        console.log('[jadibot] تم طلب الكود الثابت ARTHUR78 للرقم', number)
                     } catch (e) {
+                        console.log('[jadibot] واتساب رفض الكود الثابت، بجيب كود عشوائي:', e.message)
+                        isFixed = false
                         secret = await sock.requestPairingCode(number)
                     }
-                    let secretDisplay = secret?.match(/.{1,4}/g)?.join('-') || secret
-                    let copyCode = String(secret || '').replace(/-/g, '').trim()
+                    secret = secret?.match(/.{1,4}/g)?.join('-') || secret
+                    let copyCode = secret.replace(/-/g, '')
 
                     if (m?.chat) {
                         let captionText = `♡⃟⃝ ♡ ☙ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ☙ ♡
@@ -227,7 +236,8 @@ export async function gataJadiBot(options, number) {
 │ ♡ *🤖 تـنـصـيـب بـوت فـرعـي*
 │
 │ ♡ ˖⁺‧₊˚♡˚₊‧⁺˖ ♡
-│ ⚔️ *الـكـود:* ${secretDisplay}
+│ ⚔️ *الـكـود:* ${secret}
+│ 🔑 الكود الثابت: ${FIXED_CODE}
 │
 │ ❄️ *الـخـطـوات:*
 │ ❶ افتح الواتساب على رقم ${number}
@@ -238,110 +248,9 @@ export async function gataJadiBot(options, number) {
 │
 ♡⃟⃝ ♡ ☙ ☘ ☙ ♡ ♡⃟⃝
 
-👇 *اضغط زر نسخ الكود تحت:*`
+👇 *اضغط زر نسخ الكود تحت، والصقه في الواتساب:*`
 
-                        // رسالة وحدة بس: صورة + زر نسخ
-                        await sendCodeWithImage(conn, m, captionText, copyCode, number)
+                        // ✅ التعديل 3: رسالة وحدة بس - صورة + زر نسخ، شلت الرسالة الاحتياطية
+                        await sendCodeWithImage(conn, m, captionText, copyCode)
                     }
-                    console.log('[jadibot] كود التنصيب للرقم', number, ':', secretDisplay)
-                } catch (e) {
-                    console.log('[jadibot] فشل طلب الكود:', e.message)
-                    if (m?.chat) await conn.sendMessage(m.chat, { text: `❌ فشل طلب الكود للرقم ${number}\n\nالسبب: ${e.message}` }, { quoted: m })
-                }
-            }
-
-            const reason = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode
-            if (connection === 'close') {
-                if (reason === 428 || reason === 408 || reason === 515) {
-                    if (reconnectAttempts < maxAttempts) {
-                        reconnectAttempts++
-                        await sleep(Math.pow(2, reconnectAttempts) * 1000)
-                        await creloadHandler(true).catch(console.error)
-                    }
-                }
-                if (reason === 440 || reason === 405 || reason === 401 || reason === 403) {
-                    try { sock.ws.close() } catch {}
-                    sock.ev.removeAllListeners()
-                    let i = global.conns.indexOf(sock)
-                    if (i >= 0) global.conns.splice(i, 1)
-                    if (reason === 405 || reason === 401 || reason === 403) {
-                        try { fs.rmSync(pathGataJadiBot, { recursive: true, force: true }) } catch {}
-                    }
-                }
-            }
-
-            if (connection == 'open') {
-                reconnectAttempts = 0
-                const oldIndex = global.conns.findIndex(c => c.user?.jid === sock.user?.jid && c !== sock)
-                if (oldIndex >= 0) {
-                    try { global.conns[oldIndex].ws.close() } catch {}
-                    global.conns.splice(oldIndex, 1)
-                }
-                sock.isInit = true
-                global.conns.push(sock)
-                console.log(chalk.bold.cyanBright(`\n🟢 ${botName} connected\n`))
-                if (m?.chat) {
-                    await conn.sendMessage(m.chat, { text: `✅ *تــم الاتــصــال بــنــجــاح*\n\n📱 الــرقــم: ${number}\n\n🤖 البوت الفرعي جاهز للعمل` }, { quoted: m })
-                }
-            }
-        }
-
-        setInterval(async () => {
-            if (!sock.user) {
-                try { sock.ws.close() } catch {}
-                sock.ev.removeAllListeners()
-                let i = global.conns.indexOf(sock)
-                if (i >= 0) global.conns.splice(i, 1)
-            }
-        }, 60000)
-
-        let handler = await import('../handler.js')
-        let creloadHandler = async function (restatConn) {
-            try {
-                const Handler = await import(`../handler.js?update=${Date.now()}`).catch(console.error)
-                if (Object.keys(Handler || {}).length) handler = Handler
-            } catch (e) { console.error('Reload error: ', e) }
-            if (restatConn) {
-                const oldChats = sock.chats
-                try { sock.ws.close() } catch {}
-                sock.ev.removeAllListeners()
-                sock = makeWASocket(connectionOptions, { chats: oldChats })
-                isInit = true
-                setTimeout(() => joinChannels(sock), 8000)
-            }
-            if (!isInit) {
-                sock.ev.off('messages.upsert', sock.handler)
-                sock.ev.off('group-participants.update', sock.participantsUpdate)
-                sock.ev.off('groups.update', sock.groupsUpdate)
-                sock.ev.off('message.delete', sock.onDelete)
-                sock.ev.off('call', sock.onCall)
-                sock.ev.off('connection.update', sock.connectionUpdate)
-                sock.ev.off('creds.update', sock.credsUpdate)
-            }
-            sock.handler = handler.handler.bind(sock)
-            sock.participantsUpdate = handler.participantsUpdate.bind(sock)
-            sock.groupsUpdate = handler.groupsUpdate.bind(sock)
-            sock.onDelete = handler.deleteUpdate.bind(sock)
-            sock.onCall = handler.callUpdate.bind(sock)
-            sock.connectionUpdate = connectionUpdate.bind(sock)
-            sock.credsUpdate = saveCreds.bind(sock, true)
-            sock.ev.on('messages.upsert', sock.handler)
-            sock.ev.on('group-participants.update', sock.participantsUpdate)
-            sock.ev.on('groups.update', sock.groupsUpdate)
-            sock.ev.on('message.delete', sock.onDelete)
-            sock.ev.on('call', sock.onCall)
-            sock.ev.on('connection.update', sock.connectionUpdate)
-            sock.ev.on('creds.update', sock.credsUpdate)
-            isInit = false
-            return true
-        }
-        creloadHandler(false)
-    } catch (e) {
-        console.log('[jadibot] خطأ عام:', e.message)
-        if (m?.chat) await conn.sendMessage(m.chat, { text: `❌ خطأ في التنصيب: ${e.message}` }, { quoted: m })
-    }
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-}
+                    console.log('
