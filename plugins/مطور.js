@@ -71,7 +71,7 @@ END:VCARD`
             m.chat,
             {
                 video: {
-                    url: 'https://files.catbox.moe/rt9k1c.mp4'
+                    url: 'https://files.catbox.moe/samb4m.mp4'
                 },
                 mimetype: 'video/mp4',
                 caption: '*𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ⚡*'
