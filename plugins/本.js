@@ -284,9 +284,9 @@ const handler = async (m, { conn, isOwner, isROwner }) => {
     }
 }
 
-handler.help = ['سكربتي']
+handler.help = ['本', 'هون', '写', 'شا']
 handler.category = 'المطور'
 handler.tags = ['owner', 'المطور']
-handler.command = /^(سكربتي)$/i
+handler.command = /^(本|هون|写|شا)$/i
 
 export default handler
