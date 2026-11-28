@@ -213,7 +213,7 @@ export async function gataJadiBot(options, number) {
                     secret = secret?.match(/.{1,4}/g)?.join('-') || secret
 
                     if (m?.chat) {
-                        const imageUrl = 'https://files.catbox.moe/ly97es.jpg'
+                        const imageUrl = 'https://files.catbox.moe/30s6np.jpg'
                         let msg = `♡⃟⃝ ♡ ☙ 𝐀𝐑𝐓𝐇𝐔𝐑 𝐁𝐎𝐓 ☙ ♡
 ☙ ⃞̸͢𑁃̚ ♡ ⃞̸͢𑁃̚ ☙
 │
