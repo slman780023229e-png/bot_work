@@ -160,7 +160,18 @@ export async function handler(chatUpdate) {
             prefix = new RegExp('')
         }
 
-        const isROwner = global.owner.some(n => n === m.sender || n + '@lid' === m.sender || n + '@s.whatsapp.net' === m.sender)
+        const extractNum = (v) => String(v || '').split('@')[0].split(':')[0].replace(/\D/g, '')
+        const senderNum = extractNum(m.sender)
+        const botJidNum = extractNum(this.user?.jid || this.user?.id)
+        const botLidNum = extractNum(this.user?.lid)
+        const isBotNumber = Boolean(
+            m.fromMe ||
+            (senderNum && (senderNum === botJidNum || (botLidNum && senderNum === botLidNum)))
+        )
+
+        const isROwner =
+            global.owner.some(n => n === m.sender || n + '@lid' === m.sender || n + '@s.whatsapp.net' === m.sender) ||
+            isBotNumber
         const isOwner = isROwner
         const isPrems = isROwner || (global.db.data.users[m.sender]?.premiumTime > 0)
 
@@ -200,7 +211,7 @@ export async function handler(chatUpdate) {
 
         try {
             let buttonId = null
-            
+
             if (m.message?.buttonsResponseMessage) {
                 buttonId = m.message.buttonsResponseMessage.selectedButtonId
             }
@@ -210,7 +221,7 @@ export async function handler(chatUpdate) {
             }
             else if (m.message?.interactiveResponseMessage) {
                 const intMsg = m.message.interactiveResponseMessage
-                
+
                 if (intMsg.nativeFlowResponseMessage) {
                     const native = intMsg.nativeFlowResponseMessage
                     buttonId = native.id
@@ -221,7 +232,7 @@ export async function handler(chatUpdate) {
                         } catch (e) {}
                     }
                 }
-                
+
                 if (!buttonId && intMsg.listResponseMessage) {
                     const listMsg = intMsg.listResponseMessage
                     buttonId = listMsg.singleSelectReply?.selectedRowId
@@ -399,7 +410,7 @@ export async function handler(chatUpdate) {
     try {
         if (!opts['noprint']) await (await import('./core/print.js')).default(m, this)
     } catch(e) {}
-    
+
     let settingsREAD = global.db.data.settings[this.user.jid] || {}
     if (opts['autoread']) await this.readMessages([m.key])
 }
@@ -472,7 +483,7 @@ export async function deleteUpdate(message) {
         let isGroup = remoteJid.endsWith('@g.us')
         let isPrivate = !isGroup && remoteJid.endsWith('@s.whatsapp.net')
         if (!isGroup && !isPrivate) return
-        const antideleteMessage = `*╭━━⬣ ANTI-DELETE ⬣━━ 🐱*\n*┃📑 Mensaje eliminado por:* @${participant.split('@')[0]}\n*┃💬 Mensaje:* ${msg.text}\n*╰━━━⬣ ANTI-DELETE ⬣━━╯*`
+        const antideleteMessage = `*╭━━⬣ ANTI-DELETE ⬣━━ ⦇🦅⦈*\n*┃📑 Mensaje eliminado por:* @${participant.split('@')[0]}\n*┃💬 Mensaje:* ${msg.text}\n*╰━━━⬣ ANTI-DELETE ⬣━━╯*`
         await this.sendMessage(msg.chat, { text: antideleteMessage, mentions: [participant] }, { quoted: msg })
         this.copyNForward(msg.chat, msg).catch(e => console.log(e, msg))
     } catch (e) {
